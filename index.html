@@ -1,0 +1,715 @@
+<!doctype html>
+<!--
+  Care Finder — Victoria & Saanich (prototype)
+  ------------------------------------------------------------
+  Self-contained page. To embed in a website:
+    • Upload this file and add:  <iframe src="care-finder.html" style="width:100%;height:900px;border:0"></iframe>
+    • or paste the whole file into an "HTML embed" block (Wix / Squarespace / WordPress Custom HTML).
+  External resources: Leaflet 1.9.4 (cdnjs), OpenStreetMap tiles,
+  BC Address Geocoder (geocoder.api.gov.bc.ca, free, no key) with OpenStreetMap Nominatim as fallback.
+  To update listings, edit the DATA object near the bottom (one entry per home / provider).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Care Home Finder</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+:root{
+  --bg:#f6f5f1; --surface:#ffffff; --surface-2:#f0eee8; --ink:#1c2220; --muted:#5b6561; --line:#e2dfd7;
+  --accent:#1f6a57; --accent-soft:#e1efe9; --accent-ink:#ffffff;
+  --ltc:#b0502a; --al:#2d66a8; --il:#7b6a24; --mc:#7a3f8f;
+  --ok:#2c7a4b; --ok-soft:#e3f2e8; --upd:#2d66a8; --upd-soft:#e4edf8; --warn:#9a5b00; --warn-soft:#fbefd9; --bad:#a83232; --bad-soft:#f8e3e3;
+  --radius:12px; --shadow:0 1px 2px rgba(0,0,0,.05),0 4px 14px rgba(0,0,0,.05);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#111514; --surface:#191e1c; --surface-2:#212725; --ink:#e7ece9; --muted:#9ba6a1; --line:#2c3431;
+    --accent:#56b99c; --accent-soft:#1d3029; --accent-ink:#0d1714;
+    --ltc:#e08360; --al:#6fa3e0; --il:#c9b35e; --mc:#c08ad3;
+    --ok:#6cc792; --ok-soft:#1b2d22; --upd:#7aaee6; --upd-soft:#1b2634; --warn:#e5ad55; --warn-soft:#30271a; --bad:#e78181; --bad-soft:#341f1f;
+    --shadow:none;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#111514; --surface:#191e1c; --surface-2:#212725; --ink:#e7ece9; --muted:#9ba6a1; --line:#2c3431;
+  --accent:#56b99c; --accent-soft:#1d3029; --accent-ink:#0d1714;
+  --ltc:#e08360; --al:#6fa3e0; --il:#c9b35e; --mc:#c08ad3;
+  --ok:#6cc792; --ok-soft:#1b2d22; --upd:#7aaee6; --upd-soft:#1b2634; --warn:#e5ad55; --warn-soft:#30271a; --bad:#e78181; --bad-soft:#341f1f;
+  --shadow:none;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--accent)}
+button,input,select{font:inherit;color:inherit}
+.wrap{max-width:1360px;margin:0 auto;padding:0 16px}
+
+/* Header + search */
+header.top{background:var(--surface);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;padding:18px 0 4px}
+.brand h1{font-size:22px;margin:0;letter-spacing:-.01em}
+.brand .sub{color:var(--muted);font-size:14px}
+.search{display:grid;grid-template-columns:1fr auto auto;gap:8px;padding:12px 0 8px}
+.search input[type=text]{width:100%;padding:11px 14px;border:1px solid var(--line);border-radius:10px;background:var(--bg)}
+.search input[type=text]:focus{outline:2px solid var(--accent);outline-offset:-1px}
+.btn{border:1px solid var(--line);background:var(--surface);padding:10px 14px;border-radius:10px;cursor:pointer;white-space:nowrap}
+.btn:hover{background:var(--surface-2)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+.btn.primary:hover{filter:brightness(1.07)}
+.btn.sm{padding:5px 10px;font-size:13px;border-radius:8px}
+.row2{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;padding:0 0 14px;font-size:14px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{border:1px solid var(--line);background:var(--bg);border-radius:999px;padding:4px 10px;font-size:13px;cursor:pointer}
+.chip:hover{border-color:var(--accent)}
+.radius{display:flex;align-items:center;gap:8px}
+.radius input[type=range]{accent-color:var(--accent);width:150px}
+.radius output{font-weight:600;min-width:52px}
+.loc-status{color:var(--muted)}
+.loc-status b{color:var(--ink)}
+label.inline{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}
+
+/* Tabs */
+nav.tabs{display:flex;gap:4px;overflow-x:auto;border-bottom:1px solid var(--line);background:var(--surface)}
+nav.tabs button{border:0;background:none;padding:12px 14px;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;white-space:nowrap;font-weight:500}
+nav.tabs button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--accent)}
+nav.tabs .count{display:inline-block;margin-left:6px;background:var(--surface-2);border-radius:999px;padding:0 7px;font-size:12px;color:var(--muted)}
+
+/* Layout */
+.layout{display:grid;grid-template-columns:250px minmax(0,1fr) minmax(0,1fr);gap:16px;padding:16px 0 32px;align-items:start}
+aside.filters{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px;position:sticky;top:12px;max-height:calc(100vh - 24px);overflow:auto}
+.fgroup{padding:10px 0;border-top:1px solid var(--line)}
+.fgroup:first-child{border-top:0;padding-top:0}
+.fgroup h3{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 8px;font-weight:600}
+.fgroup label{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:14px;cursor:pointer}
+.fgroup select,.fgroup input[type=search]{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.dot{width:10px;height:10px;border-radius:50%;display:inline-block;flex:none}
+.hint{font-size:12px;color:var(--muted);margin:6px 0 0}
+
+.results-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.results-head .n{font-weight:600}
+.results-head select{padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+.list{display:flex;flex-direction:column;gap:10px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;box-shadow:var(--shadow);transition:border-color .15s}
+.card.hl{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+.card .t{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+.card h2{font-size:16px;margin:0;line-height:1.3}
+.card .meta{color:var(--muted);font-size:13px;margin-top:2px}
+.dist{text-align:right;white-space:nowrap;font-size:13px;color:var(--muted)}
+.dist b{display:block;font-size:17px;color:var(--ink)}
+.tags{display:flex;flex-wrap:wrap;gap:5px;margin:9px 0 2px}
+.tag{font-size:12px;padding:2px 8px;border-radius:999px;background:var(--surface-2);color:var(--ink);white-space:nowrap}
+.tag.LTC{background:color-mix(in srgb,var(--ltc) 15%,transparent);color:var(--ltc)}
+.tag.AL{background:color-mix(in srgb,var(--al) 15%,transparent);color:var(--al)}
+.tag.IL{background:color-mix(in srgb,var(--il) 18%,transparent);color:var(--il)}
+.tag.MC{background:color-mix(in srgb,var(--mc) 15%,transparent);color:var(--mc)}
+.tag.ok{background:var(--ok-soft);color:var(--ok)} .tag.upd{background:var(--upd-soft);color:var(--upd)}
+.tag.part,.tag.warn{background:var(--warn-soft);color:var(--warn)} .tag.bad{background:var(--bad-soft);color:var(--bad)}
+.facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:10px 0 4px}
+.fact{background:var(--bg);border-radius:8px;padding:7px 9px}
+.fact .k{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.fact .v{font-size:14px;font-weight:600;line-height:1.3}
+.actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.actions a.btn{text-decoration:none;color:inherit}
+.btn.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+details.more{margin-top:8px;font-size:14px}
+details.more summary{cursor:pointer;color:var(--accent);font-size:13px;font-weight:500}
+details.more dl{display:grid;grid-template-columns:120px 1fr;gap:4px 10px;margin:10px 0 0}
+details.more dt{color:var(--muted);font-size:13px}
+details.more dd{margin:0;overflow-wrap:anywhere}
+.flag{display:flex;gap:6px;font-size:13px;color:var(--warn);margin-top:6px}
+.todo{margin-top:8px;padding:8px 10px;border:1px dashed var(--line);border-radius:8px;font-size:13px;color:var(--muted)}
+.empty{padding:30px;text-align:center;color:var(--muted);background:var(--surface);border:1px dashed var(--line);border-radius:var(--radius)}
+
+.mapcol{position:sticky;top:12px}
+#map{height:calc(100vh - 80px);min-height:420px;border-radius:var(--radius);border:1px solid var(--line);z-index:0}
+.legend{display:flex;flex-wrap:wrap;gap:10px;font-size:12px;color:var(--muted);margin-top:8px}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.leaflet-popup-content{font:13px/1.4 system-ui,sans-serif}
+.leaflet-popup-content b{font-size:14px}
+
+/* Compare + data */
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin:16px 0}
+.panel h2{margin:0 0 6px;font-size:18px}
+.panel p.lead{margin:0 0 14px;color:var(--muted)}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{padding:9px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+thead th{background:var(--surface-2);font-weight:600;position:sticky;top:0}
+tbody th{font-weight:500;color:var(--muted);white-space:nowrap;width:190px}
+tr.sec td,tr.sec th{background:var(--bg);font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+td.na{color:var(--muted);font-style:italic}
+.note{background:var(--accent-soft);border-radius:10px;padding:12px 14px;font-size:14px;margin:0 0 14px}
+.note b{color:var(--accent)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+ul.tight{margin:6px 0;padding-left:18px} ul.tight li{margin:3px 0}
+footer{color:var(--muted);font-size:12px;padding:0 0 28px}
+[hidden]{display:none!important}
+
+@media (max-width:1100px){
+  .layout{grid-template-columns:230px minmax(0,1fr)}
+  .mapcol{grid-column:1 / -1;position:static;order:-1}
+  #map{height:380px;min-height:0}
+}
+@media (max-width:760px){
+  .layout{grid-template-columns:minmax(0,1fr)}
+  aside.filters{position:static;max-height:none}
+  .search{grid-template-columns:1fr 1fr}
+  .search input[type=text]{grid-column:1 / -1}
+  .facts{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .grid2{grid-template-columns:1fr}
+  #map{height:320px}
+  details.more dl{grid-template-columns:1fr}
+  details.more dt{margin-top:6px}
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <div class="brand">
+      <h1>Care Home Finder</h1>
+      <span class="sub">Victoria &amp; Saanich · <span id="hdrCounts"></span> · prototype</span>
+    </div>
+    <form class="search" id="searchForm" autocomplete="off">
+      <input type="text" id="addr" placeholder="Enter your address or postal code, e.g. 1900 Fort St, Victoria" aria-label="Your address">
+      <button class="btn primary" type="submit">Search nearby</button>
+      <button class="btn" type="button" id="geoBtn">Use my location</button>
+    </form>
+    <div class="row2">
+      <div class="chips" id="presets" aria-label="Quick locations"></div>
+      <div class="radius">
+        <label for="radius">Within</label>
+        <input type="range" id="radius" min="1" max="30" step="1" value="10">
+        <output id="radiusOut">10 km</output>
+      </div>
+      <label class="inline"><input type="checkbox" id="anyDist"> Show all distances</label>
+      <span class="loc-status" id="locStatus">No location set yet. Search an address, pick a neighbourhood or click the map.</span>
+    </div>
+  </div>
+  <nav class="tabs wrap" role="tablist">
+    <button role="tab" data-tab="homes" aria-selected="true">Care homes<span class="count" id="cHomes"></span></button>
+    <button role="tab" data-tab="incare" aria-selected="false">In-home care<span class="count" id="cIncare"></span></button>
+    <button role="tab" data-tab="compare" aria-selected="false">Compare &amp; shortlist<span class="count" id="cCompare">0</span></button>
+    <button role="tab" data-tab="data" aria-selected="false">About the data</button>
+  </nav>
+</header>
+
+<main class="wrap">
+  <!-- LIST + MAP VIEW -->
+  <div class="layout" id="listView">
+    <aside class="filters" id="filtersHomes">
+      <div class="fgroup"><h3>Search by name</h3><input type="search" id="fqH" placeholder="e.g. Amica"></div>
+      <div class="fgroup"><h3>Care level</h3>
+        <label><input type="checkbox" name="lvl" value="LTC"><span class="dot" style="background:var(--ltc)"></span>Long-term care (24-hr nursing)</label>
+        <label><input type="checkbox" name="lvl" value="AL"><span class="dot" style="background:var(--al)"></span>Assisted living</label>
+        <label><input type="checkbox" name="lvl" value="IL"><span class="dot" style="background:var(--il)"></span>Independent living</label>
+        <label><input type="checkbox" name="lvl" value="MC"><span class="dot" style="background:var(--mc)"></span>Memory care program</label>
+      </div>
+      <div class="fgroup"><h3>Payment</h3>
+        <label><input type="checkbox" name="fund" value="public">Publicly subsidized</label>
+        <label><input type="checkbox" name="fund" value="private">Private pay</label>
+        <label><input type="checkbox" name="fund" value="nonprofit">Non-profit housing</label>
+        <label><input type="checkbox" name="fund" value="check">Unclear (ask operator)</label>
+      </div>
+      <div class="fgroup"><h3>Max public wait</h3>
+        <select id="fWait"><option value="">Any</option><option value="6">6 months or less</option><option value="12">12 months or less</option><option value="18">18 months or less</option></select>
+        <p class="hint">Private-pay homes don't have an Island Health waitlist, so this filter never hides them.</p>
+      </div>
+      <div class="fgroup"><h3>Must have</h3>
+        <label><input type="checkbox" name="feat" value="campus">Campus of care (can move between care levels on site)</label>
+        <label><input type="checkbox" name="feat" value="veteran">Veteran-priority beds</label>
+        <label><input type="checkbox" name="feat" value="language">Cultural / language program</label>
+        <label><input type="checkbox" name="feat" value="faith">Faith-based operator</label>
+        <label><input type="checkbox" name="feat" value="dayprogram">Adult day program</label>
+      </div>
+      <div class="fgroup"><h3>Operator</h3>
+        <select id="fOp"><option value="">Any</option><option>Health authority</option><option>Non-profit</option><option>For-profit</option></select>
+      </div>
+      <div class="fgroup"><h3>Size</h3>
+        <select id="fBeds"><option value="">Any size</option><option value="lt60">Small (under 60 beds)</option><option value="60-150">Medium (60–150)</option><option value="gt150">Large (over 150)</option></select>
+        <p class="hint">Bed counts are known for 10 homes. Homes with no count are hidden when you choose a size.</p>
+      </div>
+      <button class="btn sm" type="button" data-reset="homes">Clear filters</button>
+    </aside>
+
+    <aside class="filters" id="filtersIncare" hidden>
+      <div class="fgroup"><h3>Search by name</h3><input type="search" id="fqC" placeholder="e.g. Bayshore"></div>
+      <div class="fgroup"><h3>Services needed</h3>
+        <label><input type="checkbox" name="svc" value="nursing">Nursing (RN/LPN)</label>
+        <label><input type="checkbox" name="svc" value="h24">24-hour, overnight or live-in</label>
+        <label><input type="checkbox" name="svc" value="dementia">Dementia / Alzheimer's care</label>
+        <label><input type="checkbox" name="svc" value="palliative">Palliative / end-of-life</label>
+        <label><input type="checkbox" name="svc" value="respite">Respite for family caregivers</label>
+        <label><input type="checkbox" name="svc" value="companion">Companionship</label>
+        <label><input type="checkbox" name="svc" value="transport">Transportation</label>
+        <label><input type="checkbox" name="svc" value="billing">Insurance / VAC billing</label>
+      </div>
+      <div class="fgroup"><h3>Listing confidence</h3>
+        <label><input type="checkbox" id="fHideWarn">Hide listings flagged "verify by phone"</label>
+      </div>
+      <p class="hint">Home care comes to you. Every company here serves Victoria and Saanich. The distance shown is to their office, for reference only.</p>
+      <button class="btn sm" type="button" data-reset="incare">Clear filters</button>
+    </aside>
+
+    <section>
+      <div class="results-head">
+        <span class="n" id="resultsN"></span>
+        <label class="inline" style="font-size:14px">Sort
+          <select id="sortSel"></select>
+        </label>
+      </div>
+      <div class="list" id="list"></div>
+    </section>
+
+    <div class="mapcol">
+      <div id="map" role="region" aria-label="Map of results"></div>
+      <div class="legend" id="legend"></div>
+    </div>
+  </div>
+
+  <!-- COMPARE -->
+  <div id="compareView" hidden>
+    <div class="panel">
+      <h2>Compare &amp; shortlist</h2>
+      <p class="lead">Press <b>Compare</b> on any listing to add it here (up to 4 homes and 4 home-care companies). Your shortlist is saved in this browser.</p>
+      <div id="compareHomes"></div>
+      <div id="compareIncare" style="margin-top:18px"></div>
+    </div>
+  </div>
+
+  <!-- DATA / ABOUT -->
+  <div id="dataView" hidden>
+    <div class="panel">
+      <h2>How publicly funded long-term care works in BC</h2>
+      <div class="note"><b>Families don't apply to a subsidized long-term care home directly.</b> An Island Health case manager assesses the person's needs. The family can list preferred homes, but the person must usually accept the <i>first appropriate bed</i> that comes up. They can ask to transfer to a preferred home later. Private-pay homes and home-care companies take enquiries directly.</div>
+      <p style="margin:0">Start the process through Island Health Home &amp; Community Care, or ask your family doctor or hospital social worker for a referral.</p>
+    </div>
+    <div class="panel">
+      <h2>Search parameters: what's live and what's next</h2>
+      <p class="lead">"Live" items work on the current data. The other parameters come from public BC sources and can be added in phase 2.</p>
+      <div class="tablewrap"><table id="paramTable"><thead><tr><th>#</th><th>Parameter</th><th>Status</th><th>Source</th></tr></thead><tbody></tbody></table></div>
+    </div>
+    <div class="grid2">
+      <div class="panel" style="margin-top:0">
+        <h2>Data quality checks</h2>
+        <p class="lead">Issues found automatically in the source spreadsheets. Fix these before launch.</p>
+        <ul class="tight" id="dqList"></ul>
+      </div>
+      <div class="panel" style="margin-top:0">
+        <h2>Map positions</h2>
+        <p class="lead" id="geoStatus">Checking…</p>
+        <p class="hint">Pins start at approximate positions. The page then tries to match each street address with the BC Address Geocoder and saves the results in this browser.</p>
+        <h2 style="margin-top:16px">Sources</h2>
+        <ul class="tight">
+          <li><a href="https://www.islandhealth.ca/" target="_blank" rel="noopener">Island Health</a>: long-term care wait times and assisted living locations</li>
+          <li>BC Residential Care, Hospital Act and Assisted Living registries</li>
+          <li>Greater Victoria Chamber of Commerce directory, BBB, SSSBC directories, 211 BC</li>
+          <li>Home-care listings re-verified 21 Sep 2026</li>
+          <li>Phase 2: <a href="https://www.seniorsadvocatebc.ca/long-term-care-and-assisted-living-directory/" target="_blank" rel="noopener">BC Seniors Advocate directory</a> and <a href="https://www.islandhealth.ca/our-services/community-care-facilities-licensing/inspections-reports" target="_blank" rel="noopener">Island Health inspection reports</a></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <footer>Prototype for discussion. Information is drawn from public directories and may change. Always confirm availability, cost and care levels directly with the home or with Island Health. Distances are straight-line and drive times are estimates.</footer>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const DATA = {"facilities": [{"id": "f1", "name": "Aberdeen Hospital", "muni": "Victoria", "typeText": "Licensed Residential Care", "tags": ["LTC"], "addr": "1450 Hillside Avenue, Victoria, BC V8T 2B7", "phone": "250-595-4321", "contact": "Not publicly listed (Island Health-operated)", "wait": "Six to nine months", "waitRange": [6, 9], "beds": null, "bedsText": "N/A (Hospital Act facility)", "notes": "Hospital Act facility operated directly by Island Health", "src": "Island Health – LTC Wait Times; Hospital Act Facilities List", "funding": "public", "op": "Health authority", "feats": [], "flags": [], "lat": 48.4366, "lng": -123.3315}, {"id": "f2", "name": "Beacon Hill Villa", "muni": "Victoria", "typeText": "Licensed Residential Care", "tags": ["LTC"], "addr": "635 Superior Street, Victoria, BC V8V 1V1", "phone": "604-620-1893", "contact": "Not publicly listed", "wait": "18 months – two years", "waitRange": [18, 24], "beds": 80, "bedsText": "80", "notes": "Operated by Retirement Concepts (Beacon Hill Seniors Village 3 LLP)", "src": "Island Health – LTC Wait Times; BC Residential Care Registry", "funding": "public", "op": "For-profit", "feats": [], "flags": ["Phone uses a non-local area code (604) — may be a head office; confirm the home’s direct line."], "lat": 48.4146, "lng": -123.364}, {"id": "f3", "name": "Beckley Farm Lodge", "muni": "Victoria", "typeText": "Licensed Residential Care", "tags": ["LTC"], "addr": "530 Simcoe Street, Victoria, BC V8V 4W4", "phone": "250-658-3200", "contact": "Mandy Parker (Broadmead Care Society)", "wait": "12–18 months", "waitRange": [12, 18], "beds": 65, "bedsText": "65", "notes": "Operated by Broadmead Care Society", "src": "Chamber (Broadmead Care) + Island Health + BC Registry", "funding": "public", "op": "Non-profit", "feats": [], "flags": [], "lat": 48.4127, "lng": -123.37}, {"id": "f4", "name": "Glengarry Hospital", "muni": "Victoria", "typeText": "Licensed Residential Care", "tags": ["LTC"], "addr": "1780 Fairfield Road, Victoria, BC V8S 1G7", "phone": "250-595-4321", "contact": "Not publicly listed", "wait": "12–18 months", "waitRange": [12, 18], "beds": null, "bedsText": "N/A (Hospital Act facility)", "notes": "Hospital Act facility operated by Island Health", "src": "Island Health – LTC Wait Times; Hospital Act Facilities List", "funding": "public", "op": "Health authority", "feats": [], "flags": [], "lat": 48.414, "lng": -123.333}, {"id": "f5", "name": "Glenwarren Lodge", "muni": "Victoria", "typeText": "Licensed Residential Care", "tags": ["LTC"], "addr": "1230 Balmoral Road, Victoria, BC V8T 1B3", "phone": "250-383-2323", "contact": "Not publicly listed", "wait": "Nine months to 12 months", "waitRange": [9, 12], "beds": null, "bedsText": "", "notes": "Operated by Revera", "src": "Island Health – LTC Wait Times", "funding": "public", "op": "For-profit", "feats": [], "flags": ["Bed count not collected."], "lat": 48.431, "lng": -123.354}, {"id": "f6", "name": "Gorge Road Hospital", "muni": "Victoria", "typeText": "Licensed Residential Care", "tags": ["LTC"], "addr": "63 Gorge Road East, Victoria, BC V9A 1L2", "phone": "250-519-3500", "contact": "Not publicly listed", "wait": "12–18 months", "waitRange": [12, 18], "beds": null, "bedsText": "N/A (Hospital Act facility)", "notes": "Hospital Act facility operated by Island Health", "src": "Island Health – LTC Wait Times; Hospital Act Facilities List", "funding": "public", "op": "Health authority", "feats": [], "flags": [], "lat": 48.44, "lng": -123.38}, {"id": "f7", "name": "James Bay Care Centre", "muni": "Victoria", "typeText": "Licensed Residential Care", "tags": ["LTC"], "addr": "336 Simcoe Street, Victoria, BC V8V 1L2", "phone": "289-719-3175", "contact": "Not publicly listed", "wait": "Three to six months", "waitRange": [3, 6], "beds": 115, "bedsText": "115", "notes": "Operator: AXR Operating (BC) GP Inc.; shortest published wait time in the Victoria core", "src": "Island Health – LTC Wait Times; BC Residential Care Registry", "funding": "public", "op": "For-profit", "feats": [], "flags": ["Phone uses a non-local area code (289) — may be a head office; confirm the home’s direct line."], "lat": 48.412, "lng": -123.3755}, {"id": "f8", "name": "Mount St. Mary Hospital", "muni": "Victoria", "typeText": "Licensed Residential Care", "tags": ["LTC"], "addr": "861 Fairfield Road, Victoria, BC V8V 5A9", "phone": "250-480-3138", "contact": "Not publicly listed", "wait": "18 months – two years", "waitRange": [18, 24], "beds": null, "bedsText": "N/A (Hospital Act facility)", "notes": "Hospital Act facility", "src": "Island Health – LTC Wait Times; Hospital Act Facilities List", "funding": "public", "op": "Health authority", "feats": [], "flags": [], "lat": 48.4175, "lng": -123.358}, {"id": "f9", "name": "Selkirk Place / Selkirk Seniors Village", "muni": "Victoria", "typeText": "Licensed Residential Care; Assisted Living", "tags": ["LTC", "AL"], "addr": "385 Waterfront Crescent, Victoria, BC V8T 0A7", "phone": "604-633-2202 (LTC) / 250-940-1028 (Assisted Living)", "contact": "Not publicly listed", "wait": "18 months – two years (LTC)", "waitRange": [18, 24], "beds": 214, "bedsText": "214", "notes": "Campus of care operated by Retirement Concepts – LTC tower plus separate assisted-living tower", "src": "Island Health – LTC + Assisted Living Locations; BC Assisted Living Registry", "funding": "public", "op": "For-profit", "feats": ["campus"], "flags": ["Phone uses a non-local area code (604) — may be a head office; confirm the home’s direct line."], "lat": 48.438, "lng": -123.379}, {"id": "f10", "name": "The Summit Care Residence at Quadra Village", "muni": "Victoria", "typeText": "Licensed Residential Care", "tags": ["LTC"], "addr": "955 Hillside Avenue, Victoria, BC V8T 1Z9", "phone": "250-360-3114", "contact": "Not publicly listed", "wait": "18 months – two years", "waitRange": [18, 24], "beds": 320, "bedsText": "320", "notes": "Large Island Health-operated complex care home", "src": "Island Health – LTC Wait Times; BC Residential Care Registry", "funding": "public", "op": "Health authority", "feats": [], "flags": [], "lat": 48.439, "lng": -123.357}, {"id": "f11", "name": "Victoria Chinatown Care Centre", "muni": "Victoria", "typeText": "Licensed Residential Care", "tags": ["LTC"], "addr": "555 Herald Street, Victoria, BC V8W 1S5", "phone": "Not published", "contact": "Not publicly listed", "wait": "Nine months to 12 months", "waitRange": [9, 12], "beds": 31, "bedsText": "31", "notes": "Culturally specific care – Cantonese/Mandarin-speaking staff and multicultural programming", "src": "Island Health – LTC Wait Times; BC Residential Care Registry", "funding": "public", "op": "Unknown", "feats": ["language"], "flags": ["No phone number published."], "lat": 48.429, "lng": -123.368}, {"id": "f12", "name": "Kiwanis Pavilion", "muni": "Saanich", "typeText": "Licensed Residential Care", "tags": ["LTC"], "addr": "3034 Cedar Hill Road, Victoria, BC V8T 3J3", "phone": "250-598-2022", "contact": "Not publicly listed", "wait": "18 months – two years", "waitRange": [18, 24], "beds": 122, "bedsText": "122", "notes": "Operated by Oak Bay Kiwanis Health Care Society", "src": "Island Health – LTC Wait Times; BC Residential Care Registry", "funding": "public", "op": "Non-profit", "feats": [], "flags": [], "lat": 48.45, "lng": -123.341}, {"id": "f13", "name": "Luther Court", "muni": "Saanich", "typeText": "Licensed Residential Care; Assisted Living; Independent Living", "tags": ["LTC", "AL", "IL"], "addr": "1525 Cedar Hill Cross Road, Victoria, BC V8P 5M1", "phone": "250-477-7271", "contact": "Not publicly listed", "wait": "18 months – two years (LTC)", "waitRange": [18, 24], "beds": 60, "bedsText": "60", "notes": "Full campus of care – independent housing, assisted living, residential care and adult day programs", "src": "Island Health – LTC + Assisted Living Locations; BC Registry", "funding": "public", "op": "Non-profit", "feats": ["campus", "dayprogram"], "flags": [], "lat": 48.466, "lng": -123.334}, {"id": "f14", "name": "Nigel House", "muni": "Saanich", "typeText": "Licensed Residential Care", "tags": ["LTC"], "addr": "846 Nigel Avenue, Victoria, BC V8X 4E5", "phone": "250-658-0311", "contact": "Mandy Parker (Broadmead Care Society)", "wait": "Six to nine months", "waitRange": [6, 9], "beds": 28, "bedsText": "28", "notes": "Operated by Broadmead Care Society", "src": "Chamber (Broadmead Care) + Island Health + BC Registry", "funding": "public", "op": "Non-profit", "feats": [], "flags": [], "lat": 48.457, "lng": -123.374}, {"id": "f15", "name": "The Heights at Mount View", "muni": "Saanich", "typeText": "Licensed Residential Care", "tags": ["LTC"], "addr": "3814 Carey Road, Victoria, BC V8Z 4C4", "phone": "604-940-1960", "contact": "Not publicly listed", "wait": "18 months – two years", "waitRange": [18, 24], "beds": 260, "bedsText": "260", "notes": "Operated by Baptist Housing; large faith-based complex care home", "src": "Island Health – LTC Wait Times; BC Residential Care Registry", "funding": "public", "op": "Non-profit", "feats": ["faith"], "flags": ["Phone uses a non-local area code (604) — may be a head office; confirm the home’s direct line."], "lat": 48.471, "lng": -123.388}, {"id": "f16", "name": "Veterans Memorial Lodge at Broadmead", "muni": "Saanich", "typeText": "Licensed Residential Care", "tags": ["LTC"], "addr": "4579 Chatterton Way, Victoria, BC V8X 4Y7", "phone": "250-658-0311", "contact": "Mandy Parker (Broadmead Care Society)", "wait": "Eligible Veterans: three to six months; Non-Veteran: 18 months – two years", "waitRange": [3, 24], "beds": null, "bedsText": "", "notes": "Veteran-priority beds; campus also runs Adult Day Programs", "src": "Chamber (Broadmead Care) + Island Health – LTC Wait Times", "funding": "public", "op": "Non-profit", "feats": ["veteran", "dayprogram"], "flags": ["Bed count not collected."], "lat": 48.495, "lng": -123.38}, {"id": "f17", "name": "Amica Douglas House", "muni": "Victoria", "typeText": "Independent Living; Assisted Living; Memory Care", "tags": ["AL", "IL", "MC"], "addr": "50 Douglas Street, Victoria, BC V8V 2N8", "phone": "250-383-6258", "contact": "Denise Grant", "wait": "N/A – private-pay residence, not on Island Health's publicly funded wait list", "waitRange": null, "beds": null, "bedsText": "", "notes": "Memory care specialty program", "src": "Chamber (Amica | Senior Lifestyles) + BC Assisted Living Registry", "funding": "private", "op": "For-profit", "feats": ["campus"], "flags": ["Bed count not collected."], "lat": 48.411, "lng": -123.368}, {"id": "f18", "name": "Amica On The Gorge", "muni": "Victoria", "typeText": "Independent Living; Assisted Living", "tags": ["AL", "IL"], "addr": "994 Gorge Road West, Victoria, BC V9A 0G8", "phone": "250-220-8000", "contact": "Not publicly listed", "wait": "N/A – private-pay", "waitRange": null, "beds": null, "bedsText": "", "notes": "", "src": "BC Assisted Living Registry", "funding": "private", "op": "For-profit", "feats": ["campus"], "flags": ["Bed count not collected."], "lat": 48.45, "lng": -123.405}, {"id": "f19", "name": "Amica Somerset House", "muni": "Victoria", "typeText": "Independent Living; Assisted Living", "tags": ["AL", "IL"], "addr": "540 Dallas Road, Victoria, BC V8V 4X9", "phone": "250-380-9121", "contact": "Not publicly listed", "wait": "N/A – private-pay", "waitRange": null, "beds": null, "bedsText": "", "notes": "", "src": "BC Assisted Living Registry", "funding": "private", "op": "For-profit", "feats": ["campus"], "flags": ["Bed count not collected."], "lat": 48.407, "lng": -123.377}, {"id": "f20", "name": "Berwick House", "muni": "Saanich", "typeText": "Independent Living; Assisted Living; Licensed Residential Care", "tags": ["LTC", "AL", "IL"], "addr": "4062 Shelbourne Street, Victoria, BC V8N 3E6", "phone": "250-721-4062", "contact": "Lesley Sikorski (Berwick Retirement Communities, corporate)", "wait": "N/A – private-pay", "waitRange": null, "beds": null, "bedsText": "", "notes": "Continuum of care per operator", "src": "Chamber (Berwick Retirement Communities) + BC Assisted Living Registry", "funding": "private", "op": "For-profit", "feats": ["campus"], "flags": ["Bed count not collected."], "lat": 48.48, "lng": -123.328}, {"id": "f21", "name": "Berwick Royal Oak", "muni": "Saanich", "typeText": "Independent Living; Assisted Living", "tags": ["AL", "IL"], "addr": "4680 Elk Lake Drive, Victoria, BC V8Z 0B4", "phone": "250-386-4680", "contact": "Lesley Sikorski (Berwick Retirement Communities, corporate)", "wait": "N/A – private-pay", "waitRange": null, "beds": null, "bedsText": "", "notes": "", "src": "Chamber (operator match) + BC Assisted Living Registry", "funding": "private", "op": "For-profit", "feats": ["campus"], "flags": ["Bed count not collected."], "lat": 48.496, "lng": -123.387}, {"id": "f22", "name": "Ross Place Seniors Community", "muni": "Victoria", "typeText": "Assisted Living", "tags": ["AL"], "addr": "2631 Douglas Street, Victoria, BC V8T 5L7", "phone": "250-381-8666", "contact": "Not publicly listed", "wait": "N/A – subsidized; apply via Island Health Home Health office", "waitRange": null, "beds": null, "bedsText": "", "notes": "Semi-independent supportive housing", "src": "BC Assisted Living Registry + 211 BC", "funding": "public", "op": "Unknown", "feats": [], "flags": ["Bed count not collected."], "lat": 48.44, "lng": -123.367}, {"id": "f23", "name": "Marrion Village 1980", "muni": "Victoria", "typeText": "Assisted Living", "tags": ["AL"], "addr": "1980 Bee Street, Victoria, BC V8R 0A1", "phone": "250-592-2593", "contact": "Not publicly listed", "wait": "", "waitRange": null, "beds": null, "bedsText": "", "notes": "Operated by Baptist Housing Society", "src": "BC Assisted Living Registry", "funding": "check", "op": "Non-profit", "feats": ["faith"], "flags": ["Bed count not collected."], "lat": 48.441, "lng": -123.326}, {"id": "f24", "name": "Marrion Village 1950", "muni": "Victoria", "typeText": "Assisted Living", "tags": ["AL"], "addr": "1950 Bee Street, Victoria, BC V8R 6P6", "phone": "250-592-2593", "contact": "Not publicly listed", "wait": "", "waitRange": null, "beds": null, "bedsText": "", "notes": "Operated by Baptist Housing Society", "src": "BC Assisted Living Registry", "funding": "check", "op": "Non-profit", "feats": ["faith"], "flags": ["Bed count not collected."], "lat": 48.4405, "lng": -123.3266}, {"id": "f25", "name": "Parry Place", "muni": "Victoria", "typeText": "Assisted Living", "tags": ["AL"], "addr": "408 Parry Street, Victoria, BC V8V 2H7", "phone": "250-382-4443", "contact": "Not publicly listed", "wait": "", "waitRange": null, "beds": null, "bedsText": "", "notes": "Operated by Beacon Community Association", "src": "Island Health – Assisted Living Locations; BC Registry", "funding": "public", "op": "Non-profit", "feats": [], "flags": ["Bed count not collected."], "lat": 48.415, "lng": -123.376}, {"id": "f26", "name": "Cridge Village Seniors Centre", "muni": "Victoria", "typeText": "Assisted Living", "tags": ["AL"], "addr": "1307 Hillside Avenue, Victoria, BC V8T 0A2", "phone": "250-384-8058", "contact": "Not publicly listed", "wait": "", "waitRange": null, "beds": null, "bedsText": "", "notes": "Operated by The Cridge Centre for the Family", "src": "BC Assisted Living Registry + 211 BC", "funding": "check", "op": "Non-profit", "feats": [], "flags": ["Bed count not collected."], "lat": 48.4383, "lng": -123.344}, {"id": "f27", "name": "Hillside Terrace", "muni": "Victoria", "typeText": "Assisted Living", "tags": ["AL"], "addr": "1460 Hillside Avenue, Victoria, BC V8T 2B7", "phone": "250-812-3358", "contact": "Not publicly listed", "wait": "", "waitRange": null, "beds": null, "bedsText": "", "notes": "Operated by Victoria Cool Aid Society; serves formerly homeless/vulnerable seniors", "src": "Island Health – Assisted Living Locations; BC Registry", "funding": "public", "op": "Non-profit", "feats": [], "flags": ["Bed count not collected."], "lat": 48.437, "lng": -123.333}, {"id": "f28", "name": "The Cedars", "muni": "Saanich", "typeText": "Assisted Living", "tags": ["AL"], "addr": "3710 Cedar Hill Road, Victoria, BC V8P 5V5", "phone": "250-477-4850", "contact": "Not publicly listed", "wait": "", "waitRange": null, "beds": null, "bedsText": "", "notes": "Operated by Dawson Heights Housing Ltd.", "src": "BC Assisted Living Registry", "funding": "check", "op": "For-profit", "feats": [], "flags": ["Bed count not collected."], "lat": 48.465, "lng": -123.339}, {"id": "f29", "name": "Wellesley Seniors Village (The Wellesley by Retirement Concepts)", "muni": "Victoria", "typeText": "Independent Living; Assisted Living", "tags": ["AL", "IL"], "addr": "2800 Blanshard Street, Victoria, BC V8T 5B5", "phone": "250-383-9099", "contact": "Not publicly listed", "wait": "N/A – private-pay", "waitRange": null, "beds": null, "bedsText": "", "notes": "Operated by Retirement Concepts", "src": "BC Assisted Living Registry", "funding": "private", "op": "For-profit", "feats": ["campus"], "flags": ["Bed count not collected."], "lat": 48.443, "lng": -123.363}, {"id": "f30", "name": "Craigdarroch Care Home", "muni": "Victoria", "typeText": "Licensed Residential Care", "tags": ["LTC"], "addr": "1048 Craigdarroch Road, Victoria, BC V8W 3C8", "phone": "250-595-3813", "contact": "Yamina Gilbert (Trillium Communities, corporate)", "wait": "N/A – private-pay", "waitRange": null, "beds": null, "bedsText": "", "notes": "", "src": "Chamber (Trillium Communities) + BC Registry", "funding": "private", "op": "For-profit", "feats": [], "flags": ["Bed count not collected."], "lat": 48.422, "lng": -123.342}, {"id": "f31", "name": "Douglas Care Community", "muni": "Victoria", "typeText": "Licensed Residential Care", "tags": ["LTC"], "addr": "657 Niagara Street, Victoria, BC V8V 1J1", "phone": "250-383-9011", "contact": "Yamina Gilbert (Trillium Communities, corporate)", "wait": "N/A – private-pay", "waitRange": null, "beds": null, "bedsText": "", "notes": "", "src": "Chamber (Trillium Communities) + BC Registry", "funding": "private", "op": "For-profit", "feats": [], "flags": ["Bed count not collected."], "lat": 48.412, "lng": -123.365}, {"id": "f32", "name": "Hart House", "muni": "Victoria", "typeText": "Licensed Residential Care", "tags": ["LTC"], "addr": "1961 Fairfield Road, Victoria, BC V8W 3C8", "phone": "250-383-6509", "contact": "Yamina Gilbert (Trillium Communities, corporate)", "wait": "N/A – private-pay", "waitRange": null, "beds": null, "bedsText": "", "notes": "", "src": "Chamber (Trillium Communities) + BC Registry", "funding": "private", "op": "For-profit", "feats": [], "flags": ["Bed count not collected.", "Postal code duplicates Craigdarroch Care Home (V8W 3C8) — verify address."], "lat": 48.414, "lng": -123.328}, {"id": "f33", "name": "St. Charles Manor", "muni": "Victoria", "typeText": "Licensed Residential Care", "tags": ["LTC"], "addr": "1006 St. Charles Street, Victoria, BC V8S 3P6", "phone": "250-595-4255", "contact": "Yamina Gilbert (Trillium Communities, corporate)", "wait": "N/A – private-pay", "waitRange": null, "beds": null, "bedsText": "", "notes": "", "src": "Chamber (Trillium Communities) + BC Registry", "funding": "private", "op": "For-profit", "feats": [], "flags": ["Bed count not collected."], "lat": 48.42, "lng": -123.34}, {"id": "f34", "name": "Clover Point Care", "muni": "Victoria", "typeText": "Licensed Residential Care", "tags": ["LTC"], "addr": "90 Linden Avenue, Victoria, BC V8V 4C8", "phone": "250-590-7885", "contact": "Yamina Gilbert (Trillium Communities, corporate)", "wait": "N/A – private-pay", "waitRange": null, "beds": null, "bedsText": "", "notes": "", "src": "Chamber (Trillium Communities) + BC Registry", "funding": "private", "op": "For-profit", "feats": [], "flags": ["Bed count not collected."], "lat": 48.409, "lng": -123.35}, {"id": "f35", "name": "Mount Douglas Seniors Housing Society", "muni": "Saanich", "typeText": "Independent Living", "tags": ["IL"], "addr": "100-1552 Arrow Road, Saanich, BC V8N 0B8", "phone": "250-721-1818", "contact": "Colin Doylend", "wait": "N/A – building currently in redevelopment", "waitRange": null, "beds": null, "bedsText": "", "notes": "Redeveloping a 1971 building; part of a campaign addressing seniors' homelessness", "src": "Chamber only", "funding": "nonprofit", "op": "Non-profit", "feats": [], "flags": ["Bed count not collected.", "Building currently in redevelopment — not accepting residents.", "Single source (Chamber of Commerce listing) — not cross-checked against a registry."], "lat": 48.48, "lng": -123.35}, {"id": "f36", "name": "Cherish Community Living Ltd.", "muni": "Victoria", "typeText": "Independent Living", "tags": ["IL"], "addr": "2234 Sooke Road, Victoria, BC V9B 1X1", "phone": "250-478-4438", "contact": "Micky Fleming", "wait": "", "waitRange": null, "beds": null, "bedsText": "", "notes": "Community-living retirement residence", "src": "Chamber only", "funding": "private", "op": "For-profit", "feats": [], "flags": ["Bed count not collected.", "Located on Sooke Rd (Colwood/View Royal area), outside the Victoria core.", "Single source (Chamber of Commerce listing) — not cross-checked against a registry."], "lat": 48.443, "lng": -123.49}, {"id": "f37", "name": "Victoria Harbour, by Chartwell", "muni": "Victoria", "typeText": "Independent Living; Assisted Living", "tags": ["AL", "IL"], "addr": "777 Belleville Street, Victoria, BC V8W 0G1", "phone": "250-999-1631", "contact": "Barbara Hicks", "wait": "N/A – private-pay", "waitRange": null, "beds": null, "bedsText": "", "notes": "Part of Chartwell Retirement Residences, Canada's largest seniors' housing provider", "src": "Chamber only", "funding": "private", "op": "For-profit", "feats": ["campus"], "flags": ["Bed count not collected.", "Single source (Chamber of Commerce listing) — not cross-checked against a registry."], "lat": 48.419, "lng": -123.378}, {"id": "f38", "name": "PARC Retirement Living", "muni": "Victoria", "typeText": "Independent Living", "tags": ["IL"], "addr": "Address not published in directory – Victoria, BC", "phone": "250-882-8104", "contact": "Margaret Lucas", "wait": "", "waitRange": null, "beds": null, "bedsText": "", "notes": "Focus on active, independent aging-in-place programming", "src": "Chamber only", "funding": "private", "op": "For-profit", "feats": [], "flags": ["Bed count not collected.", "Street address not published — location unknown.", "Single source (Chamber of Commerce listing) — not cross-checked against a registry."], "lat": null, "lng": null}, {"id": "f39", "name": "Optima Living", "muni": "Saanich", "typeText": "Independent Living; Assisted Living; Supportive Living; Licensed Residential Care", "tags": ["LTC", "AL", "IL", "MC"], "addr": "3965 Shelbourne Street, Victoria, BC V8N 6J4", "phone": "250-519-2121", "contact": "Krista Thompson", "wait": "", "waitRange": null, "beds": null, "bedsText": "", "notes": "Full continuum including Memory Care specialty programming", "src": "Chamber only", "funding": "private", "op": "For-profit", "feats": ["campus"], "flags": ["Bed count not collected.", "Single source (Chamber of Commerce listing) — not cross-checked against a registry."], "lat": 48.476, "lng": -123.329}, {"id": "f40", "name": "Kiwanis Village Society", "muni": "Victoria", "typeText": "Independent Living", "tags": ["IL"], "addr": "1419 Mallek Crescent, Victoria, BC V8T 2R3", "phone": "250-595-0331", "contact": "Karen Styba", "wait": "N/A – independent living only, no nursing services", "waitRange": null, "beds": null, "bedsText": "", "notes": "Applicants must be mobile and capable of self-care", "src": "Chamber only", "funding": "nonprofit", "op": "Non-profit", "feats": [], "flags": ["Bed count not collected.", "Single source (Chamber of Commerce listing) — not cross-checked against a registry."], "lat": 48.446, "lng": -123.342}, {"id": "f41", "name": "Sunrise of Victoria", "muni": "Victoria", "typeText": "Independent Living; Assisted Living; Memory Care; Licensed Residential Care", "tags": ["LTC", "AL", "IL", "MC"], "addr": "920 Humboldt Street, Victoria, BC V8V 4W7", "phone": "250-383-1366", "contact": "Gilles Lacroix, Executive Director", "wait": "N/A – private-pay residence, not on Island Health's publicly funded wait list", "waitRange": null, "beds": null, "bedsText": "", "notes": "Memory care specialty program; full continuum of care on one campus", "src": "Sunrise Senior Living (official site); BBB; Island Health HCC Beds Inventory", "funding": "private", "op": "For-profit", "feats": ["campus"], "flags": ["Bed count not collected."], "lat": 48.421, "lng": -123.36}], "homecare": [{"id": "h1", "name": "Victoria Comfort Keepers", "muni": "Victoria", "typeText": "Home Care", "addr": "207-1001 Cloverdale Ave, Victoria, BC V8X 4C9", "phone": "778-265-5999", "contact": "Roger Martin", "notes": "Companionship, personal care, dementia/Alzheimer's care, 24-hour live-in care, respite & palliative support", "vnotes": "Address, phone and owner (Roger Martin) confirmed on BBB profile, which also lists Melinda Cottingham, Manager of Client Services. Franchise site confirms Victoria office is active.", "verified": "2026-09-21", "vstatus": "Verified — no change", "vcls": "ok", "svc": ["h24", "dementia", "palliative", "respite", "companion"], "site": "https://www.comfortkeepers.ca/victoria/", "sources": [{"n": "BBB – Comfort Keepers", "u": "https://www.bbb.org/ca/bc/victoria/profile/home-health-care/comfort-keepers-0047-90007095"}, {"n": "Comfort Keepers Victoria", "u": "https://www.comfortkeepers.ca/victoria/"}, {"n": "Chamber", "u": "https://web.victoriachamber.ca/Seniors-Services-and-Retirement-Housing?xsort=true"}, {"n": "SSSBC Directory", "u": "https://sssbc.org/wp-content/uploads/2024/09/SSD-2025-Digital-002.pdf"}, {"n": "Comfort Keepers Victoria", "u": "https://www.comfortkeepers.ca/victoria/"}], "multi": true, "lat": 48.448, "lng": -123.36}, {"id": "h2", "name": "Home Instead", "muni": "Victoria", "typeText": "Home Care", "addr": "1005-622 Admirals Rd, Victoria, BC V9A 2N7 (also 3450 Uptown Blvd, Unit 301, Victoria, BC V8Z 0B9)", "phone": "250-382-6565", "contact": "Janet Hassell", "notes": "Companionship, transportation, meal preparation, end-of-life care", "vnotes": "Phone 250-382-6565 confirmed on the Home Instead Victoria office page (office 3012). Lead contact Janet Hassell was not re-confirmed on the current site — verify by phone before use.", "verified": "2026-09-21", "vstatus": "Verified — phone confirmed", "vcls": "ok", "svc": ["palliative", "transport", "companion"], "site": "https://www.homeinstead.ca/home-care/can/bc/victoria/3012/", "sources": [{"n": "Home Instead Victoria", "u": "https://www.homeinstead.ca/home-care/can/bc/victoria/3012/"}, {"n": "Chamber", "u": "https://web.victoriachamber.ca/Seniors-Services-and-Retirement-Housing?xsort=true"}, {"n": "SSSBC Directory", "u": "https://sssbc.org/wp-content/uploads/2024/09/SSD-2025-Digital-002.pdf"}, {"n": "Home Instead Victoria", "u": "https://www.homeinstead.ca/home-care/can/bc/victoria/3012/"}], "multi": true, "lat": 48.444, "lng": -123.421}, {"id": "h3", "name": "Pacific Coast Health Services", "muni": "Victoria", "typeText": "Home Care", "addr": "2631B Douglas St, Victoria, BC V8T 4M2", "phone": "250-389-0202 (fax 250-389-0210)", "contact": "Twyla Johnson", "notes": "Full spectrum of care, from occasional visits to around-the-clock support", "vnotes": "Address, phone and lead contact confirmed. Twyla Johnson, RN BScN is listed as Director of Operations. Services include nursing, personal support/attendant, respite, dementia, palliative, post-operative and advanced foot care.", "verified": "2026-09-21", "vstatus": "Verified — no change", "vcls": "ok", "svc": ["nursing", "h24", "dementia", "palliative", "respite"], "site": "https://www.pacificcoasthealthservices.ca/", "sources": [{"n": "Pacific Coast Health Services", "u": "https://www.pacificcoasthealthservices.ca/"}, {"n": "BBB profile", "u": "https://www.bbb.org/ca/bc/victoria/profile/home-health-care/pacific-coast-health-services-0047-19048"}, {"n": "Chamber – Seniors Services", "u": "https://web.victoriachamber.ca/Seniors-Services-and-Retirement-Housing?xsort=true"}, {"n": "Chamber – Health Services", "u": "https://web.victoriachamber.ca"}, {"n": "SSSBC Directory", "u": "https://sssbc.org/wp-content/uploads/2024/09/SSD-2025-Digital-002.pdf"}], "multi": true, "lat": 48.44, "lng": -123.3668}, {"id": "h4", "name": "Bayshore Home Health", "muni": "Victoria", "typeText": "Home Care + Nursing", "addr": "103-1831 Oak Bay Ave, Victoria, BC V8R 1C3", "phone": "250-370-2253 (fax 250-370-2258)", "contact": "Stasia Hartley (Regional Director); Diana Lozano, LPN (Manager); Colleen Frampton (Client Services)", "notes": "Nursing and personal care; free RN assessment; largest national home-care provider in Canada", "vnotes": "Address and 250-370-2253 confirmed. Zoe Keefe is no longer listed; BBB now lists Stasia Hartley as Regional Director/principal contact, Diana Lozano LPN as Manager and Colleen Frampton for client service. National intake line 1-888-698-2728.", "verified": "2026-09-21", "vstatus": "Updated — contact changed", "vcls": "upd", "svc": ["nursing"], "site": "https://www.bayshore.ca/locations/bayshore-home-health-victoria-vancouver-island-bc/", "sources": [{"n": "BBB – Bayshore Home Health", "u": "https://www.bbb.org/ca/bc/victoria/profile/home-health-care/bayshore-home-health-0047-1070685"}, {"n": "Bayshore Victoria & Vancouver Island", "u": "https://www.bayshore.ca/locations/bayshore-home-health-victoria-vancouver-island-bc/"}, {"n": "Chamber", "u": "https://web.victoriachamber.ca/Health,-Hearing-Medical-Services/Bayshore-Home-Health-4357"}, {"n": "SSSBC Directory", "u": "https://sssbc.org/wp-content/uploads/2024/09/SSD-2025-Digital-002.pdf"}, {"n": "BC Care Providers Assoc. 2016 list", "u": "https://bccare.ca/2014/07/vancouver-island-health-authority-service-provider-members/"}, {"n": "Bayshore Victoria", "u": "https://www.bayshore.ca/locations/bayshore-home-health-victoria-vancouver-island-bc/"}], "multi": true, "lat": 48.425, "lng": -123.332}, {"id": "h5", "name": "CommunityPlus – Home Healthcare + Nursing (Community Plus Care Ltd.)", "muni": "Metchosin (HQ); services Victoria & Saanich", "typeText": "Home Care + Nursing-Supervised Care", "addr": "Registered address 3865 Cactus Pl, Victoria, BC V9C 4A7 (Metchosin/Colwood area); no public storefront office", "phone": "250-658-6508; toll-free 855-658-6508", "contact": "Matthew Lowe (Manager/owner); coordination team Brittany, Holly, Tara", "notes": "Nursing-overseen caregivers; describes itself as BC's only living-wage home care provider", "vnotes": "Company is operating. The previously listed 1758 Armstrong Ave office is not confirmed anywhere current; BBB now records 3865 Cactus Pl, Victoria V9C 4A7. Toll-free line added. Brittany is one of three coordinators; Matthew Lowe is listed as manager.", "verified": "2026-09-21", "vstatus": "Updated — address and contact", "vcls": "upd", "svc": ["nursing"], "site": "https://communitypluscare.ca/home-care-victoria/", "sources": [{"n": "CommunityPlus", "u": "https://communitypluscare.ca/home-care-victoria/"}, {"n": "BBB profile", "u": "https://www.bbb.org/ca/bc/victoria/profile/home-care/community-plus-home-care-nursing-0047-235973921"}, {"n": "Chamber", "u": "https://web.victoriachamber.ca/Seniors-Services-and-Retirement-Housing?xsort=true"}, {"n": "SSSBC Directory", "u": "https://sssbc.org/wp-content/uploads/2024/09/SSD-2025-Digital-002.pdf"}, {"n": "BBB Home Care category", "u": "https://www.bbb.org/ca/bc/victoria/category/home-care"}], "multi": true, "lat": 48.4, "lng": -123.51}, {"id": "h6", "name": "Success Solutions Home Care (Success.care)", "muni": "Victoria", "typeText": "Home Care", "addr": "Head office 2446 Beacon Ave, Sidney, BC V8L 1X6; Victoria office 301-1321 Blanshard St, Victoria, BC V8W 0B6 (per Chamber)", "phone": "250-857-2165", "contact": "Bo Jia (Founder & CEO); Candice Peterson, BSN, RN (Care Coordinator)", "notes": "Bathing, dressing, hygiene, companionship, meal prep, medication reminders, light housekeeping, transportation", "vnotes": "Phone unchanged. The company website now shows a Sidney head office at 2446 Beacon Ave; the Chamber listing still shows the Blanshard St Victoria address with Candice Peterson as contact. Direct billing through most extended-health plans is offered.", "verified": "2026-09-21", "vstatus": "Updated — head office moved", "vcls": "upd", "svc": ["transport", "companion", "billing"], "site": "https://www.success.care/", "sources": [{"n": "Success Home Care", "u": "https://www.success.care/"}, {"n": "Our Victoria Team", "u": "https://www.success.care/our-team"}, {"n": "Chamber listing", "u": "https://web.victoriachamber.ca/Health,-Hearing-Medical-Services?ysort=true"}, {"n": "Chamber", "u": "https://web.victoriachamber.ca/Health,-Hearing-Medical-Services/Success-Solutions-Home-Care--11685"}, {"n": "success.care", "u": "https://www.success.care/"}, {"n": "LinkedIn", "u": "https://ca.linkedin.com/company/success-solutions-home-care-agency"}], "multi": false, "lat": 48.65, "lng": -123.4}, {"id": "h7", "name": "SE Health / Elizz by SE Health (Saint Elizabeth Health Care)", "muni": "Saanich", "typeText": "Home Care + Nursing", "addr": "Victoria-area mailing address c/o 1122 Lockley Rd, Victoria, BC V9A 4S3 (211 BC); the 3939 Quadra St office is no longer confirmed", "phone": "Victoria & area 1-866-790-3594; national 1-800-463-1763", "contact": "Not publicly listed", "notes": "National non-profit; nursing, personal care, palliative and dementia care, transportation; no tax charged (not-for-profit status)", "vnotes": "Consumer home-care line is now branded Elizz by SE Health. The previously listed Saanich office (202-3939 Quadra St) and 250-385-0444 number could not be re-confirmed; 211 BC lists a Victoria-area line of 1-866-790-3594 and a Lockley Rd mailing address. Local staff available 7 a.m.–11 p.m. daily.", "verified": "2026-09-21", "vstatus": "Updated — brand, address and phone", "vcls": "upd", "svc": ["nursing", "dementia", "palliative", "transport"], "site": "https://victoria.sehc.com/faqs/", "sources": [{"n": "211 BC – SE Health", "u": "https://bc.211.ca/agency-details/saint-elizabeth-health-care-se-health-9487682/"}, {"n": "SE Health Victoria FAQs", "u": "https://victoria.sehc.com/faqs/"}, {"n": "Seniors 101 Directory", "u": "https://seniors101.ca/health-care-products-and-services/"}, {"n": "SE Health Victoria/Island", "u": "https://victoria.sehc.com/"}, {"n": "MapQuest", "u": "https://www.mapquest.com/ca/british-columbia/st-elizabeth-health-care-359642704"}], "multi": true, "lat": 48.437, "lng": -123.406}, {"id": "h8", "name": "Serenity Home Care Ltd. (now part of the Vyta group)", "muni": "Victoria", "typeText": "Home Care", "addr": "103-1831 Oak Bay Ave, Victoria, BC V8R 1C3", "phone": "250-590-8098", "contact": "Dana LeBlanc (Director, Growth & Operations); Lisa Solhjell (Area Director)", "notes": "Personal care & companionship; serves Victoria, Saanich, Oak Bay, Sidney, Langford", "vnotes": "BBB profile for this business now appears under the name Vyta and states \"Serenity Home Care is now part of the Vyta group.\" Address and 250-590-8098 unchanged (also 1-888-898-2728); serenityhomecare.ca no longer resolves. Note it shares the Oak Bay Ave address with Bayshore Home Health.", "verified": "2026-09-21", "vstatus": "Updated — now part of Vyta group", "vcls": "upd", "svc": ["companion"], "site": "https://vyta.ca/", "sources": [{"n": "BBB – Vyta (formerly Serenity Home Care)", "u": "https://www.bbb.org/ca/bc/victoria/profile/home-care/vyta-0047-90005267"}, {"n": "Vyta", "u": "https://vyta.ca/"}, {"n": "BBB Senior Home Care category", "u": "https://www.bbb.org/ca/bc/victoria/category/senior-home-care"}, {"n": "Serenity Home Care", "u": "https://serenityhomecare.ca/contact/"}], "multi": false, "lat": 48.4252, "lng": -123.3318}, {"id": "h9", "name": "Orchid Home Care Inc.", "muni": "Victoria", "typeText": "Home Care", "addr": "200-535 Yates St, Victoria, BC V8W 2Z6", "phone": "250-999-1023", "contact": "Not publicly listed", "notes": "Family-owned, non-franchise in-home senior care", "vnotes": "Address and phone confirmed on BBB; website active. Services now include Alzheimer’s/dementia care, hospital-discharge care, respite, live-in and overnight care plus remote monitoring and a 24/7 call centre.", "verified": "2026-09-21", "vstatus": "Verified — no change", "vcls": "ok", "svc": ["h24", "dementia", "respite"], "site": "https://www.orchidhomecare.ca/", "sources": [{"n": "BBB – Orchid Home Care", "u": "https://www.bbb.org/ca/bc/victoria/profile/home-health-care/orchid-home-care-inc-0047-235975592"}, {"n": "Orchid Home Care", "u": "https://www.orchidhomecare.ca/"}, {"n": "BBB", "u": "https://www.bbb.org/ca/bc/victoria/profile/home-health-care/orchid-home-care-inc-0047-235975592"}, {"n": "orchidhomecare.ca", "u": "https://www.orchidhomecare.ca/"}], "multi": false, "lat": 48.4265, "lng": -123.369}, {"id": "h10", "name": "Carelink Home Care Inc.", "muni": "Saanich", "typeText": "Home Care", "addr": "300-1095 McKenzie Ave, Saanich, BC V8P 2L5", "phone": "250-800-1130", "contact": "Not publicly listed", "notes": "Senior home care and healthcare-facility staffing; also lists a Delta, BC office", "vnotes": "Address 300-1095 McKenzie Ave and 250-800-1130 confirmed on the company contact page, which also lists a Delta, BC office. Note SureWork Solutions occupies suite 304 in the same building.", "verified": "2026-09-21", "vstatus": "Verified — no change", "vcls": "ok", "svc": [], "site": "https://carelinkhomecare.ca/contact", "sources": [{"n": "Carelink Home Care", "u": "https://carelinkhomecare.ca/contact"}, {"n": "BBB listing", "u": "https://www.bbb.org/ca/bc/victoria/category/senior-home-care"}, {"n": "BBB Senior Home Care category", "u": "https://www.bbb.org/ca/bc/victoria/category/senior-home-care"}], "multi": false, "lat": 48.471, "lng": -123.361}, {"id": "h11", "name": "Care & Company (Care and Company Ltd.)", "muni": "Victoria", "typeText": "Home Care", "addr": "Victoria office 4000 Douglas St, Suite 262 (BBB records #343-4000 Douglas St), Victoria, BC V8X 5K5; Nanaimo office 3035 Ross Rd", "phone": "250-382-2328", "contact": "Not publicly listed", "notes": "24-hour in-home care", "vnotes": "Phone unchanged. The Oak Bay Ave address is stale: the company now lists 4000 Douglas St, Suite 262 as its Victoria office, plus a Nanaimo office. Office hours 8:00 a.m.–4:00 p.m. weekdays with 24/7 live-in care available.", "verified": "2026-09-21", "vstatus": "Updated — office moved", "vcls": "upd", "svc": ["h24"], "site": "https://www.careandcompanygroup.ca/contact", "sources": [{"n": "Care & Company contact", "u": "https://www.careandcompanygroup.ca/contact"}, {"n": "Service areas", "u": "https://www.careandcompanygroup.ca/service-area"}, {"n": "SSSBC Directory", "u": "https://sssbc.org/wp-content/uploads/2024/09/SSD-2025-Digital-002.pdf"}, {"n": "Yelp", "u": "https://www.yelp.com/biz/care-and-company-victoria"}, {"n": "BBB", "u": "https://www.bbb.org/ca/bc/victoria/category/home-care"}, {"n": "careandcompanygroup.ca", "u": "https://www.careandcompanygroup.ca/"}], "multi": true, "lat": 48.464, "lng": -123.375}, {"id": "h12", "name": "ComForCare HomeCare – Vancouver Island", "muni": "Saanich", "typeText": "Home Care", "addr": "3518 Quadra St, Saanich, BC V8X 1G9", "phone": "778-265-3393", "contact": "Jonathan Blair (Owner/Operator)", "notes": "In-home senior care franchise", "vnotes": "Address 3518 Quadra St and 778-265-3393 confirmed on BBB, which lists Jonathan Blair as owner/operator. National ComForCare line is 1-800-886-4044.", "verified": "2026-09-21", "vstatus": "Updated — contact added", "vcls": "upd", "svc": [], "site": null, "sources": [{"n": "BBB – ComForCare Vancouver Island", "u": "https://www.bbb.org/ca/bc/victoria/profile/senior-home-care/comforcare-homecare-vancouver-island-0047-90010293"}, {"n": "SSSBC Directory", "u": "https://sssbc.org/wp-content/uploads/2024/09/SSD-2025-Digital-002.pdf"}, {"n": "BBB Senior Home Care category", "u": "https://www.bbb.org/ca/bc/victoria/category/senior-home-care"}, {"n": "MapQuest", "u": "https://www.mapquest.com/ca/british-columbia/comforcare-454772233"}], "multi": false, "lat": 48.461, "lng": -123.362}, {"id": "h13", "name": "Blue Sky Home Care", "muni": "Central Saanich / Saanichton (HQ); services Victoria & Saanich", "typeText": "Home Care", "addr": "7013 East Saanich Road, Saanichton, BC V8M 1Y3", "phone": "250-940-7070", "contact": "Not publicly listed", "notes": "Community nursing, home support (bathing, grooming, mobility, homemaking), concierge care, palliative, dementia and respite care; 24/7 line; accepts private pay and most extended-health/long-term-care insurance; also operates \"The Care Navigators\"", "vnotes": "Address 7013 East Saanich Rd and 250-940-7070 confirmed on the company contact page. Service menu has expanded to include nurse-navigated care continuity and a Nurse First medication-access program.", "verified": "2026-09-21", "vstatus": "Verified — no change", "vcls": "ok", "svc": ["nursing", "h24", "dementia", "palliative", "respite", "billing"], "site": "https://www.blueskyhomecare.ca/contact", "sources": [{"n": "Blue Sky Home Care contact", "u": "https://www.blueskyhomecare.ca/contact"}, {"n": "Services", "u": "https://blueskyhomecare.ca/services"}, {"n": "SSSBC Directory", "u": "https://sssbc.org/wp-content/uploads/2024/09/SSD-2025-Digital-002.pdf"}, {"n": "blueskyhomecare.ca", "u": "https://www.blueskyhomecare.ca/contact"}], "multi": true, "lat": 48.597, "lng": -123.415}, {"id": "h14", "name": "Helping Hands Personal Support Services (Helping Hands PSS Ltd.)", "muni": "Sidney (HQ); services Victoria & Saanich", "typeText": "Home Care", "addr": "2076 Summergate Blvd, Sidney, BC V8L 4G8", "phone": "250-881-0118", "contact": "Janette Kelly (President)", "notes": "Personal support and companionship; also serves Mill Bay/Cobble Hill", "vnotes": "Phone 250-881-0118 confirmed. BBB records a Sidney head office at 2076 Summergate Blvd and Janette Kelly as president; the business serves Greater Victoria and the Peninsula. Its own website blocks automated checks, so confirm service area by phone.", "verified": "2026-09-21", "vstatus": "Updated — address and contact added", "vcls": "upd", "svc": ["companion"], "site": "https://helpinghandspss.ca/", "sources": [{"n": "BBB – Helping Hands PSS Ltd.", "u": "https://www.bbb.org/ca/bc/sidney/profile/senior-home-care/helping-hands-pss-ltd-0047-90004787"}, {"n": "SSSBC Directory", "u": "https://sssbc.org/wp-content/uploads/2024/09/SSD-2025-Digital-002.pdf"}, {"n": "Seniors 101 Directory", "u": "https://seniors101.ca/victoria-directory/Seniors101VictoriaDirectory.pdf"}, {"n": "helpinghandspss.ca", "u": "https://helpinghandspss.ca/"}], "multi": false, "lat": 48.655, "lng": -123.41}, {"id": "h15", "name": "Home Care Assistance Victoria", "muni": "Victoria", "typeText": "Home Care", "addr": "16-21 Dallas Rd, Victoria, BC V8V 4Z9", "phone": "250-592-4881 (website); BBB also lists 250-800-9638 and 250-217-8310", "contact": "Lutgarda Mariano (Director)", "notes": "Complimentary in-home consultation; aging-in-place support", "vnotes": "Website still lists 250-592-4881 for consultations; BBB now shows 250-800-9638 as the main number plus additional lines. Director listed as Lutgarda Mariano. Programs branded Balanced Care Method and Cognitive Therapeutics Method.", "verified": "2026-09-21", "vstatus": "Updated — phone and contact", "vcls": "upd", "svc": [], "site": "https://homecareassistancevictoria.ca/", "sources": [{"n": "BBB – Home Care Assistance", "u": "https://www.bbb.org/ca/bc/victoria/profile/home-health-care/home-care-assistance-0047-90010248"}, {"n": "Home Care Assistance Victoria", "u": "https://homecareassistancevictoria.ca/"}, {"n": "SSSBC Directory", "u": "https://sssbc.org/wp-content/uploads/2024/09/SSD-2025-Digital-002.pdf"}, {"n": "BBB", "u": "https://www.bbb.org/ca/bc/victoria/profile/home-health-care/home-care-assistance-0047-90010248"}, {"n": "MapQuest", "u": "https://www.mapquest.com/ca/british-columbia/home-care-assistance-657962061"}], "multi": false, "lat": 48.408, "lng": -123.387}, {"id": "h16", "name": "Van Isle Home Care", "muni": "Victoria", "typeText": "Home Care", "addr": "606 Courtney St, Suite 203, Victoria, BC V8W 1B6", "phone": "250-412-1437; cell 250-818-6167", "contact": "Not publicly listed", "notes": "Nurse-managed in-home care, personal care, memory care, home support, housekeeping, meal preparation, palliative and hospice care; 24/7; free in-home consultation by nurse manager", "vnotes": "Address 606 Courtney St #203 and 250-412-1437 confirmed (contact page adds a 250-818-6167 cell and clientcare@vanislehomecare.ca). Note the same 250-412-1437 number is published for Retire-At-Home Victoria in one directory — confirm which brand answers.", "verified": "2026-09-21", "vstatus": "Verified — no change", "vcls": "ok", "svc": ["nursing", "h24", "dementia", "palliative"], "site": "https://vanislehomecare.ca/contact-van-isle-home-care-victoria-bc/", "sources": [{"n": "Van Isle Home Care contact", "u": "https://vanislehomecare.ca/contact-van-isle-home-care-victoria-bc/"}, {"n": "Provider listing", "u": "https://ageplacehub.ca/provider/van-isle-home-care/"}, {"n": "SSSBC Directory", "u": "https://sssbc.org/wp-content/uploads/2024/09/SSD-2025-Digital-002.pdf"}, {"n": "vanislehomecare.ca", "u": "https://vanislehomecare.ca/contact-van-isle-home-care-victoria-bc/"}], "multi": false, "lat": 48.423, "lng": -123.364}, {"id": "h17", "name": "Vancouver Island Home Support", "muni": "Victoria (service area)", "typeText": "Home Care", "addr": "Not publicly listed", "phone": "250-880-0527", "contact": "Not publicly listed", "notes": "Live-in, overnight and hourly care, personal care and home support, medication reminders, meal preparation, housekeeping, transportation, dementia support; approved Veterans Affairs Canada provider and registered with Medavie Blue Cross", "vnotes": "Website islandhomesupport.com is live and serves Greater Victoria, but publishes no address and no phone in its page text; the 250-880-0527 number comes from the 2024-25 SSSBC directory only. Confirm by web form or phone before relying on the number.", "verified": "2026-09-21", "vstatus": "Partly verified — phone unconfirmed", "vcls": "part", "svc": ["h24", "dementia", "transport", "billing"], "site": "https://islandhomesupport.com/", "sources": [{"n": "Vancouver Island Home Support", "u": "https://islandhomesupport.com/"}, {"n": "SSSBC Home Help directory", "u": "https://sssbc.org/wp-content/uploads/2025/03/HomeHelp2025cg.pdf"}, {"n": "SSSBC Directory", "u": "https://sssbc.org/wp-content/uploads/2024/09/SSD-2025-Digital-002.pdf"}, {"n": "islandhomesupport.com", "u": "https://islandhomesupport.com/"}], "multi": false, "lat": null, "lng": null}, {"id": "h18", "name": "SureWork Solutions Ltd. (SureWork Home Care Solutions)", "muni": "Victoria (service area)", "typeText": "Home Care (hourly, live-in and caregiver placement)", "addr": "304-1095 McKenzie Ave, Victoria, BC V8P 2L5; also a Sidney office", "phone": "250-361-2028", "contact": "Not publicly listed", "notes": "Live-in, private-pay care", "vnotes": "Now publishes a Victoria office at 304-1095 McKenzie Ave (same building as Carelink) plus a Sidney office and Nanaimo service area. Phone 250-361-2028 confirmed on website and BBB. Offers local and foreign (live-in) caregiver placement as well as hourly home care.", "verified": "2026-09-21", "vstatus": "Updated — address confirmed", "vcls": "upd", "svc": ["h24"], "site": "https://www.sureworksolutions.com/contact-us/", "sources": [{"n": "SureWork Solutions contact", "u": "https://www.sureworksolutions.com/contact-us/"}, {"n": "BBB profile", "u": "https://www.bbb.org/ca/bc/victoria/profile/home-health-care/surework-solutions-ltd-0047-224350169"}, {"n": "SSSBC Directory", "u": "https://sssbc.org/wp-content/uploads/2024/09/SSD-2025-Digital-002.pdf"}], "multi": false, "lat": 48.4711, "lng": -123.3612}, {"id": "h19", "name": "The SeniorCare Group (Sidney Senior Care / Victoria Community Senior Care)", "muni": "Sidney (HQ); services Victoria, Saanich, Oak Bay, Peninsula & Gulf Islands", "typeText": "Home Care", "addr": "201-2400 Bevan Ave, Sidney, BC V8L 1W1", "phone": "250-656-7176 (main); 250-589-0010", "contact": "Sherrin Griffin (VP Operations); Shauna Dorko (Manager)", "notes": "Senior care services", "vnotes": "Operating as Sidney Senior Care, a division of The SeniorCare Group, with alternate brands Victoria Senior Care, Oak Bay Senior Care and Salt Spring Island Senior Care. Head office is now 201-2400 Bevan Ave, Sidney; the Oak Bay physical location has closed, with those clients served from Sidney. Main line is 250-656-7176; 250-589-0010 still listed.", "verified": "2026-09-21", "vstatus": "Updated — address, phone, contact", "vcls": "upd", "svc": [], "site": null, "sources": [{"n": "BBB – Sidney Senior Care / The SeniorCare Group", "u": "https://www.bbb.org/ca/bc/sidney/profile/home-health-care/sidney-senior-care-a-division-of-the-seniorcare-group-0047-233820173"}, {"n": "SSSBC Directory", "u": "https://sssbc.org/wp-content/uploads/2024/09/SSD-2025-Digital-002.pdf"}], "multi": false, "lat": 48.65, "lng": -123.399}, {"id": "h20", "name": "Just Like Family Home Care (South Island)", "muni": "Victoria", "typeText": "Home Care", "addr": "380 Cook Street, Victoria, BC V8V 3X7", "phone": "250-882-2554", "contact": "southisland@justlikefamily.ca", "notes": "Personal care and hygiene, medication reminders, vitals monitoring, meals, light housekeeping and laundry, overnight and respite care, disability support, companionship, post-hospital recovery, and specialized care for Alzheimer’s, ALS and Parkinson’s", "vnotes": "Cook Street Village address (380 Cook St) and 250-882-2554 confirmed; southisland@justlikefamily.ca remains the intake email.", "verified": "2026-09-21", "vstatus": "Verified — no change", "vcls": "ok", "svc": ["h24", "dementia", "respite", "companion"], "site": "https://justlikefamily.ca/victoria/", "sources": [{"n": "Just Like Family Victoria", "u": "https://justlikefamily.ca/victoria/"}, {"n": "SSSBC Home Help directory", "u": "https://sssbc.org/wp-content/uploads/2025/03/HomeHelp2025cg.pdf"}, {"n": "SSSBC Directory", "u": "https://sssbc.org/wp-content/uploads/2024/09/SSD-2025-Digital-002.pdf"}, {"n": "Just Like Family Victoria", "u": "https://justlikefamily.ca/victoria/"}], "multi": false, "lat": 48.414, "lng": -123.355}, {"id": "h21", "name": "Bio Community Nursing Care", "muni": "Victoria", "typeText": "Home Care + Nursing", "addr": "300-848 Courtenay St, Victoria, BC V8W 1C4", "phone": "778-557-2088", "contact": "Not publicly listed", "notes": "Senior home care and home health care; agency (BCNC) founded 2019", "vnotes": "Address 300-848 Courtenay St and 778-557-2088 confirmed across BBB category listings and a local directory, which notes the agency (BCNC) began providing care in 2019. No standalone website found.", "verified": "2026-09-21", "vstatus": "Verified — no change", "vcls": "ok", "svc": ["nursing"], "site": null, "sources": [{"n": "BBB – Nursing Home near Victoria", "u": "https://www.bbb.org/ca/bc/victoria/category/nursing-home"}, {"n": "VILocal home health care providers", "u": "https://www.vilocal.ca/l/victoria-bc/home-health-care-providers"}, {"n": "BBB", "u": "https://www.bbb.org/ca/bc/victoria/category/home-care"}], "multi": false, "lat": 48.422, "lng": -123.359}, {"id": "h22", "name": "MhelWing Nursing Care", "muni": "Victoria", "typeText": "Home Care + Nursing", "addr": "300-848 Courtney St, Victoria, BC V8W 1C4", "phone": "778-486-9995", "contact": "Not publicly listed", "notes": "Senior home care, home health care (same building as Bio Community Nursing Care — separate BBB-listed business)", "vnotes": "Address 300-848 Courtney St and 778-486-9995 confirmed on BBB category listings. Still no standalone website; shares the building with Bio Community Nursing Care.", "verified": "2026-09-21", "vstatus": "Verified — no change", "vcls": "ok", "svc": ["nursing"], "site": null, "sources": [{"n": "BBB – Skilled Home Health Care near Victoria", "u": "https://www.bbb.org/ca/bc/victoria/category/skilled-home-health-care"}, {"n": "BBB", "u": "https://www.bbb.org/ca/bc/victoria/category/home-care"}], "multi": false, "lat": 48.4221, "lng": -123.3589}, {"id": "h23", "name": "Retire-At-Home Services", "muni": "Victoria", "typeText": "Home Care", "addr": "212-1027 Pandora Ave, Victoria, BC V8V 3P6", "phone": "250-412-1437 (GreyPlay 101 listing — shares the Van Isle Home Care number; confirm before use)", "contact": "Not publicly listed", "notes": "Serving Greater Victoria", "vnotes": "Still listed as open at 212-1027 Pandora Ave on BBB and a local review directory, and a GreyPlay 101 listing gives 250-412-1437 — the same number published for Van Isle Home Care. The retireathomevictoria.com domain no longer resolves, so treat this brand as unconfirmed until someone answers.", "verified": "2026-09-21", "vstatus": "Caution — verify by phone", "vcls": "warn", "svc": [], "site": null, "sources": [{"n": "GreyPlay 101 – Retire-At-Home", "u": "https://www.greyplay101.com/resource_details.php?Retire-At-Home-344093"}, {"n": "BBB – Senior Home Care near Victoria", "u": "https://www.bbb.org/ca/bc/victoria/category/senior-home-care"}, {"n": "BBB Senior Home Care category", "u": "https://www.bbb.org/ca/bc/victoria/category/senior-home-care"}, {"n": "greyplay101.com", "u": "https://www.greyplay101.com/resource_details.php?Retire-At-Home-344093"}], "multi": false, "lat": 48.427, "lng": -123.356}, {"id": "h24", "name": "Right at Home Victoria", "muni": "Colwood (HQ); services Victoria & Saanich", "typeText": "Home Care", "addr": "328 Wale Rd, Suite 132, Victoria, BC V9B 0J8", "phone": "250-880-5663", "contact": "Not publicly listed", "notes": "Companion care, personal care (bathing, hygiene, dressing, mobility, feeding), nursing care (wound and ostomy care), and specialty care including Alzheimer’s/dementia", "vnotes": "Franchise site confirms the Victoria office serves Victoria, Saanich, Esquimalt, Oak Bay, Sidney, Saanichton and Colwood, and lists its full service menu, but publishes no street address or local phone in page text; 328 Wale Rd and 250-880-5663 come from the earlier directory listing.", "verified": "2026-09-21", "vstatus": "Partly verified — contact unconfirmed", "vcls": "part", "svc": ["nursing", "dementia", "companion"], "site": "https://www.rightathomecanada.com/victoria/about-us/areas-served", "sources": [{"n": "Right at Home Victoria – areas served", "u": "https://www.rightathomecanada.com/victoria/about-us/areas-served"}, {"n": "Services", "u": "https://www.rightathomecanada.com/victoria/services"}, {"n": "Seniors 101 Directory", "u": "https://seniors101.ca/health-care-products-and-services/"}, {"n": "Right at Home Victoria", "u": "https://www.rightathomecanada.com/victoria"}], "multi": false, "lat": 48.446, "lng": -123.474}]};
+
+/* ---------- helpers ---------- */
+const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+};
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function km(a, b){ const R=6371, r=x=>x*Math.PI/180, dLa=r(b.lat-a.lat), dLo=r(b.lng-a.lng);
+  const h=Math.sin(dLa/2)**2+Math.cos(r(a.lat))*Math.cos(r(b.lat))*Math.sin(dLo/2)**2; return 2*R*Math.asin(Math.sqrt(h)); }
+const driveMin = d => Math.round(d*1.8 + 2);
+const telHref = p => { const m = String(p).match(/(1-)?\d{3}[-\s.]?\d{3}[-\s.]?\d{4}/); return m ? 'tel:' + m[0].replace(/[^\d]/g,'') : null; };
+
+const LVL = {LTC:'Long-term care', AL:'Assisted living', IL:'Independent living', MC:'Memory care'};
+const FUND = {public:'Publicly subsidized', private:'Private pay', nonprofit:'Non-profit housing', check:'Ask operator'};
+const FEAT = {campus:'Campus of care', veteran:'Veteran priority', language:'Cantonese / Mandarin', faith:'Faith-based', dayprogram:'Adult day program'};
+const SVC = {nursing:'Nursing', h24:'24-hr / live-in', dementia:'Dementia care', palliative:'Palliative', respite:'Respite', companion:'Companionship', transport:'Transportation', billing:'Insurance / VAC billing'};
+const VLABEL = {ok:'Verified', upd:'Verified (updated)', part:'Partly verified', warn:'Verify by phone'};
+const primary = f => f.tags.includes('LTC') ? 'LTC' : f.tags.includes('AL') ? 'AL' : 'IL';
+
+const PRESETS = [
+  ['Downtown', 48.4284, -123.3656], ['James Bay', 48.4135, -123.3720], ['Fairfield', 48.4150, -123.3480],
+  ['Oak Bay', 48.4265, -123.3170], ['Uptown / Saanich', 48.4545, -123.3760], ['Gordon Head', 48.4870, -123.3350],
+  ['Esquimalt', 48.4310, -123.4140], ['Royal Oak', 48.4950, -123.3880]
+];
+
+/* ---------- state ---------- */
+const state = {
+  tab: 'homes', origin: store.get('cf_origin', null), radius: store.get('cf_radius', 10), anyDist: false,
+  compare: store.get('cf_compare', {homes:[], incare:[]}), sort: {homes:'dist', incare:'dist'}, highlight: null
+};
+const geoCache = store.get('cf_geo_v1', {});
+[...DATA.facilities, ...DATA.homecare].forEach(x => {
+  x.approx = x.lat != null;
+  const c = geoCache[x.id]; if (c){ x.lat = c[0]; x.lng = c[1]; x.exact = true; }
+});
+
+/* ---------- map ---------- */
+const map = L.map('map', {scrollWheelZoom: false}).setView([48.445, -123.36], 12);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'}).addTo(map);
+map.on('focus', () => map.scrollWheelZoom.enable());
+const markerLayer = L.layerGroup().addTo(map);
+let originMarker = null, radiusCircle = null;
+const markers = {};
+map.on('click', e => setOrigin(e.latlng.lat, e.latlng.lng, 'Pinned on map'));
+
+/* ---------- location ---------- */
+async function geocode(q){
+  try{
+    const u = 'https://geocoder.api.gov.bc.ca/addresses.json?maxResults=1&provinceCode=BC&addressString=' + encodeURIComponent(q);
+    const r = await fetch(u); if (r.ok){ const j = await r.json(); const f = j.features && j.features[0];
+      if (f && f.properties.score >= 60 && f.properties.matchPrecision !== 'PROVINCE')
+        return {lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0], label: f.properties.fullAddress, score: f.properties.score, precision: f.properties.matchPrecision}; }
+  }catch(e){}
+  try{
+    const u = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=ca&q=' + encodeURIComponent(q + (/bc|british columbia/i.test(q) ? '' : ', BC'));
+    const r = await fetch(u, {headers:{'Accept':'application/json'}}); if (r.ok){ const j = await r.json();
+      if (j[0]) return {lat: +j[0].lat, lng: +j[0].lon, label: j[0].display_name.split(',').slice(0,3).join(','), score: 70, precision: 'OSM'}; }
+  }catch(e){}
+  return null;
+}
+function setOrigin(lat, lng, label){
+  state.origin = {lat, lng, label}; store.set('cf_origin', state.origin);
+  render(); fitToRadius();
+}
+function fitToRadius(){
+  if (state.origin && radiusCircle && !state.anyDist) map.fitBounds(radiusCircle.getBounds(), {padding:[10,10]});
+  else if (state.origin) map.setView([state.origin.lat, state.origin.lng], 12);
+}
+$('#searchForm').addEventListener('submit', async e => {
+  e.preventDefault(); const q = $('#addr').value.trim(); if (!q) return;
+  $('#locStatus').textContent = 'Finding address…';
+  const g = await geocode(q);
+  if (g) setOrigin(g.lat, g.lng, g.label);
+  else $('#locStatus').innerHTML = "Couldn't find that address. Try adding the city, or click your spot on the map.";
+});
+$('#geoBtn').addEventListener('click', () => {
+  if (!navigator.geolocation){ $('#locStatus').textContent = 'Location is not available in this browser.'; return; }
+  $('#locStatus').textContent = 'Getting your location…';
+  navigator.geolocation.getCurrentPosition(p => setOrigin(p.coords.latitude, p.coords.longitude, 'Your current location'),
+    () => $('#locStatus').textContent = 'Location permission was denied. Type an address or click the map instead.', {timeout: 10000});
+});
+$('#presets').innerHTML = PRESETS.map((p,i) => `<button class="chip" type="button" data-p="${i}">${p[0]}</button>`).join('');
+$('#presets').addEventListener('click', e => { const b = e.target.closest('[data-p]'); if (!b) return; const p = PRESETS[b.dataset.p]; setOrigin(p[1], p[2], p[0]); });
+const rIn = $('#radius'); rIn.value = state.radius; $('#radiusOut').textContent = state.radius + ' km';
+rIn.addEventListener('input', () => { state.radius = +rIn.value; $('#radiusOut').textContent = state.radius + ' km'; store.set('cf_radius', state.radius); render(); });
+rIn.addEventListener('change', fitToRadius);
+$('#anyDist').addEventListener('change', e => { state.anyDist = e.target.checked; render(); fitToRadius(); });
+
+/* ---------- filters ---------- */
+const checked = name => $$(`input[name="${name}"]:checked`).map(i => i.value);
+function filterHomes(){
+  const q = $('#fqH').value.trim().toLowerCase(), lv = checked('lvl'), fu = checked('fund'), fe = checked('feat');
+  const w = +$('#fWait').value || 0, op = $('#fOp').value, bs = $('#fBeds').value;
+  return DATA.facilities.filter(f => {
+    if (q && !(f.name + ' ' + f.notes + ' ' + f.addr).toLowerCase().includes(q)) return false;
+    if (lv.length && !lv.some(l => f.tags.includes(l))) return false;
+    if (fu.length && !fu.includes(f.funding)) return false;
+    if (fe.length && !fe.every(x => f.feats.includes(x))) return false;
+    if (w && f.waitRange && f.waitRange[1] > w && !(f.feats.includes('veteran') && w >= 6)) return false;
+    if (op && f.op !== op) return false;
+    if (bs){ if (f.beds == null) return false;
+      if (bs === 'lt60' && f.beds >= 60) return false; if (bs === '60-150' && (f.beds < 60 || f.beds > 150)) return false; if (bs === 'gt150' && f.beds <= 150) return false; }
+    return true;
+  });
+}
+function filterIncare(){
+  const q = $('#fqC').value.trim().toLowerCase(), sv = checked('svc'), hw = $('#fHideWarn').checked;
+  return DATA.homecare.filter(h => {
+    if (q && !(h.name + ' ' + h.notes).toLowerCase().includes(q)) return false;
+    if (sv.length && !sv.every(s => h.svc.includes(s))) return false;
+    if (hw && (h.vcls === 'warn' || h.vcls === 'part')) return false;
+    return true;
+  });
+}
+function withDistance(arr, applyRadius){
+  let hiddenNoLoc = 0;
+  const out = arr.map(x => ({x, d: (state.origin && x.lat != null) ? km(state.origin, x) : null}))
+    .filter(o => {
+      if (!applyRadius || !state.origin || state.anyDist) return true;
+      if (o.d == null){ hiddenNoLoc++; return false; }
+      return o.d <= state.radius;
+    });
+  return {out, hiddenNoLoc};
+}
+
+/* ---------- rendering ---------- */
+function compareBtn(kind, id){
+  const on = state.compare[kind].includes(id);
+  return `<button class="btn sm ${on ? 'on' : ''}" data-cmp="${kind}:${id}">${on ? '✓ In compare' : '+ Compare'}</button>`;
+}
+function distBlock(d, label){
+  if (d == null) return state.origin ? '<div class="dist">location<br>unknown</div>' : '';
+  return `<div class="dist"><b>${d.toFixed(1)} km</b>${label || '~' + driveMin(d) + ' min drive'}</div>`;
+}
+function waitText(f){
+  if (f.waitRange) return f.feats.includes('veteran') ? 'Veterans 3–6 mo · others 18–24 mo' : (f.waitRange[0] + '–' + f.waitRange[1] + ' months');
+  if (f.funding === 'private') return 'No public waitlist';
+  return 'Not published';
+}
+function homeCard({x: f, d}){
+  const tel = telHref(f.phone);
+  const tags = f.tags.map(t => `<span class="tag ${t}">${LVL[t]}</span>`).join('') + f.feats.map(t => `<span class="tag">${FEAT[t]}</span>`).join('');
+  return `<article class="card ${state.highlight === f.id ? 'hl' : ''}" id="card-${f.id}">
+    <div class="t"><div><h2>${esc(f.name)}</h2><div class="meta">${esc(f.muni)} · ${esc(f.addr)}</div></div>${distBlock(d)}</div>
+    <div class="tags">${tags}</div>
+    <div class="facts">
+      <div class="fact"><div class="k">Payment</div><div class="v">${FUND[f.funding]}</div></div>
+      <div class="fact"><div class="k">Public wait</div><div class="v">${esc(waitText(f))}</div></div>
+      <div class="fact"><div class="k">Beds</div><div class="v">${f.beds ?? (/Hospital Act/.test(f.bedsText) ? 'Hospital Act' : '—')}</div></div>
+    </div>
+    <div class="actions">
+      ${tel ? `<a class="btn sm" href="${tel}">Call ${esc(f.phone.split(' ')[0])}</a>` : ''}
+      ${f.lat != null ? `<button class="btn sm" data-locate="${f.id}">Show on map</button>` : ''}
+      ${compareBtn('homes', f.id)}
+    </div>
+    <details class="more"><summary>Details${f.flags.length ? ' · ' + f.flags.length + ' data note' + (f.flags.length > 1 ? 's' : '') : ''}</summary>
+      <dl>
+        <dt>Service type</dt><dd>${esc(f.typeText)}</dd>
+        <dt>Phone</dt><dd>${esc(f.phone || '—')}</dd>
+        <dt>Lead contact</dt><dd>${esc(f.contact || '—')}</dd>
+        <dt>Operator type</dt><dd>${esc(f.op)}</dd>
+        <dt>Notes</dt><dd>${esc(f.notes || '—')}</dd>
+        <dt>Sources</dt><dd>${esc(f.src)}</dd>
+      </dl>
+      ${f.flags.map(x => `<div class="flag">⚠ <span>${esc(x)}</span></div>`).join('')}
+      <div class="todo">Phase 2 data: direct-care hours, % private rooms, monthly rate, inspection history, complaints and quality indicators. Sources: <a href="https://www.seniorsadvocatebc.ca/long-term-care-and-assisted-living-directory/" target="_blank" rel="noopener">BC Seniors Advocate</a> and <a href="https://www.islandhealth.ca/our-services/community-care-facilities-licensing/inspections-reports" target="_blank" rel="noopener">Island Health inspections</a>.</div>
+    </details>
+  </article>`;
+}
+function incareCard({x: h, d}){
+  const tel = telHref(h.phone);
+  return `<article class="card ${state.highlight === h.id ? 'hl' : ''}" id="card-${h.id}">
+    <div class="t"><div><h2>${esc(h.name)}</h2><div class="meta">${esc(h.typeText)} · ${esc(h.muni)}</div></div>${distBlock(d, 'to office')}</div>
+    <div class="tags"><span class="tag ${h.vcls}">${VLABEL[h.vcls]} · ${esc(h.verified)}</span>${h.svc.map(s => `<span class="tag">${SVC[s]}</span>`).join('')}</div>
+    <p style="margin:8px 0 0;font-size:14px">${esc(h.notes)}</p>
+    <div class="actions">
+      ${tel ? `<a class="btn sm" href="${tel}">Call ${esc(h.phone.split(/[ ;(]/)[0])}</a>` : ''}
+      ${h.site ? `<a class="btn sm" href="${esc(h.site)}" target="_blank" rel="noopener">Website ↗</a>` : ''}
+      ${compareBtn('incare', h.id)}
+    </div>
+    <details class="more"><summary>Details &amp; verification notes</summary>
+      <dl>
+        <dt>Office</dt><dd>${esc(h.addr || '—')}</dd>
+        <dt>Phone</dt><dd>${esc(h.phone || '—')}</dd>
+        <dt>Lead contact</dt><dd>${esc(h.contact || '—')}</dd>
+        <dt>Status</dt><dd>${esc(h.vstatus)}</dd>
+        <dt>2026 check</dt><dd>${esc(h.vnotes)}</dd>
+        <dt>Sources</dt><dd>${h.sources.map(s => `<a href="${esc(s.u)}" target="_blank" rel="noopener">${esc(s.n)}</a>`).join(' · ')}</dd>
+      </dl>
+    </details>
+  </article>`;
+}
+function sortOpts(){
+  const o = state.tab === 'homes'
+    ? [['dist','Nearest first'],['wait','Shortest public wait'],['beds','Most beds'],['name','Name A–Z']]
+    : [['dist','Nearest office'],['svc','Most services'],['verified','Most verified'],['name','Name A–Z']];
+  $('#sortSel').innerHTML = o.map(([v,t]) => `<option value="${v}" ${state.sort[state.tab] === v ? 'selected' : ''}>${t}</option>`).join('');
+}
+function sortList(arr){
+  const s = (state.sort[state.tab] === 'dist' && !state.origin) ? 'name' : state.sort[state.tab], big = 1e9, vr = {ok:0, upd:1, part:2, warn:3};
+  const by = {
+    dist: o => o.d ?? big, name: o => o.x.name.toLowerCase(),
+    wait: o => o.x.waitRange ? o.x.waitRange[1] : (o.x.funding === 'private' ? 0.5 : big),
+    beds: o => -(o.x.beds ?? -1), svc: o => -o.x.svc.length, verified: o => vr[o.x.vcls]
+  }[s] || (o => o.x.name);
+  return arr.sort((a, b) => { const A = by(a), B = by(b); return A < B ? -1 : A > B ? 1 : a.x.name.localeCompare(b.x.name); });
+}
+
+function renderMap(items, kind){
+  markerLayer.clearLayers();
+  if (originMarker){ map.removeLayer(originMarker); originMarker = null; }
+  if (radiusCircle){ map.removeLayer(radiusCircle); radiusCircle = null; }
+  if (state.origin){
+    originMarker = L.circleMarker([state.origin.lat, state.origin.lng], {radius: 8, color: '#fff', weight: 3, fillColor: '#111', fillOpacity: 1}).addTo(map).bindTooltip('Your location');
+    if (!state.anyDist && kind === 'homes') radiusCircle = L.circle([state.origin.lat, state.origin.lng], {radius: state.radius*1000, color: css('--accent'), weight: 1.5, fillOpacity: .06, dashArray: '4 4', interactive: false}).addTo(map);
+  }
+  items.forEach(({x, d}) => {
+    if (x.lat == null) return;
+    const col = kind === 'homes' ? css('--' + primary(x).toLowerCase()) : css('--accent');
+    const m = L.circleMarker([x.lat, x.lng], {radius: state.highlight === x.id ? 10 : 7, color: '#fff', weight: 2, fillColor: col, fillOpacity: .95});
+    const sub = kind === 'homes' ? `${x.tags.map(t => LVL[t]).join(', ')}<br>${FUND[x.funding]} · ${esc(waitText(x))}` : esc(x.typeText);
+    m.bindPopup(`<b>${esc(x.name)}</b><br>${sub}${d != null ? `<br>${d.toFixed(1)} km away` : ''}${x.exact ? '' : '<br><i>approximate pin</i>'}`);
+    m.on('click', () => { state.highlight = x.id; const c = document.getElementById('card-' + x.id); $$('.card.hl').forEach(e => e.classList.remove('hl')); if (c){ c.classList.add('hl'); c.scrollIntoView({behavior: 'smooth', block: 'nearest'}); } });
+    m.addTo(markerLayer); markers[x.id] = m;
+  });
+  $('#legend').innerHTML = kind === 'homes'
+    ? `<span><i class="dot" style="background:var(--ltc)"></i>Long-term care</span><span><i class="dot" style="background:var(--al)"></i>Assisted living</span><span><i class="dot" style="background:var(--il)"></i>Independent living</span><span><i class="dot" style="background:#111;outline:2px solid #fff"></i>You</span><span>Click the map to set your location</span>`
+    : `<span><i class="dot" style="background:var(--accent)"></i>Company office</span><span>Home-care staff travel to you</span>`;
+}
+
+function render(){
+  // header + counts
+  $('#hdrCounts').textContent = `${DATA.facilities.length} care homes · ${DATA.homecare.length} home-care companies`;
+  const o = state.origin;
+  $('#locStatus').innerHTML = o ? `Showing results near <b>${esc(o.label)}</b> <button class="chip" type="button" id="clearLoc">clear</button>` : 'No location set yet. Search an address, pick a neighbourhood or click the map.';
+  const cl = $('#clearLoc'); if (cl) cl.onclick = () => { state.origin = null; store.set('cf_origin', null); render(); map.setView([48.445, -123.36], 12); };
+  $('#cCompare').textContent = state.compare.homes.length + state.compare.incare.length;
+
+  const H = withDistance(filterHomes(), true), C = withDistance(filterIncare(), false);
+  $('#cHomes').textContent = H.out.length; $('#cIncare').textContent = C.out.length;
+
+  if (state.tab === 'homes' || state.tab === 'incare'){
+    const kind = state.tab, R = kind === 'homes' ? H : C;
+    sortOpts();
+    const items = sortList(R.out);
+    let msg = `${items.length} ${kind === 'homes' ? 'care home' : 'home-care compan'}${kind === 'homes' ? (items.length === 1 ? '' : 's') : (items.length === 1 ? 'y' : 'ies')}`;
+    if (kind === 'homes' && o && !state.anyDist) msg += ` within ${state.radius} km`;
+    if (R.hiddenNoLoc) msg += ` · ${R.hiddenNoLoc} without an address hidden`;
+    $('#resultsN').textContent = msg;
+    $('#list').innerHTML = items.length ? items.map(kind === 'homes' ? homeCard : incareCard).join('')
+      : `<div class="empty">No matches. Try a larger radius, tick "Show all distances", or clear some filters.</div>`;
+    renderMap(items, kind);
+  }
+  if (state.tab === 'compare') renderCompare();
+  if (state.tab === 'data') renderData();
+}
+
+/* ---------- compare ---------- */
+function renderCompare(){
+  const dist = x => (state.origin && x.lat != null) ? km(state.origin, x) : null;
+  const yes = b => b ? 'Yes' : 'No';
+  const homes = state.compare.homes.map(id => DATA.facilities.find(f => f.id === id)).filter(Boolean);
+  const inc = state.compare.incare.map(id => DATA.homecare.find(f => f.id === id)).filter(Boolean);
+  const table = (items, kind, rows, todo) => {
+    if (!items.length) return `<div class="empty">No ${kind === 'homes' ? 'care homes' : 'home-care companies'} added yet. Press <b>+ Compare</b> on a listing.</div>`;
+    const head = `<tr><th></th>${items.map(x => `<th>${esc(x.name)}<br><button class="btn sm" data-cmp="${kind}:${x.id}" style="margin-top:6px">Remove</button></th>`).join('')}</tr>`;
+    const body = rows.map(([k, fn]) => `<tr><th>${k}</th>${items.map(x => `<td>${fn(x)}</td>`).join('')}</tr>`).join('')
+      + `<tr class="sec"><th colspan="${items.length + 1}">To collect in phase 2</th></tr>`
+      + todo.map(k => `<tr><th>${k}</th>${items.map(() => '<td class="na">Not yet collected</td>').join('')}</tr>`).join('');
+    return `<h3 style="margin:0 0 8px">${kind === 'homes' ? 'Care homes' : 'In-home care'}</h3><div class="tablewrap"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+  };
+  $('#compareHomes').innerHTML = table(homes, 'homes', [
+    ['Distance', x => { const d = dist(x); return d == null ? '—' : `${d.toFixed(1)} km · ~${driveMin(d)} min`; }],
+    ['Municipality', x => esc(x.muni)],
+    ['Care levels', x => x.tags.map(t => LVL[t]).join('<br>')],
+    ['Payment', x => FUND[x.funding]],
+    ['Public wait', x => esc(waitText(x))],
+    ['Beds', x => x.beds ?? '—'],
+    ['Campus of care', x => yes(x.feats.includes('campus'))],
+    ['Memory care program', x => yes(x.tags.includes('MC'))],
+    ['Special features', x => x.feats.filter(f => f !== 'campus').map(f => FEAT[f]).join(', ') || '—'],
+    ['Operator type', x => esc(x.op)],
+    ['Phone', x => esc(x.phone)],
+    ['Data notes', x => x.flags.length ? x.flags.map(esc).join('<br>') : '—']
+  ], ['Direct-care hours / resident / day', '% private rooms', 'Monthly rate', 'Inspection history', 'Substantiated complaints', 'Falls / antipsychotic use', 'Pets / couples allowed']);
+  $('#compareIncare').innerHTML = table(inc, 'incare', [
+    ['Office distance', x => { const d = dist(x); return d == null ? '—' : d.toFixed(1) + ' km'; }],
+    ['Verification', x => `${VLABEL[x.vcls]} (${esc(x.verified)})`],
+    ...Object.entries(SVC).map(([k, v]) => [v, x => yes(x.svc.includes(k))]),
+    ['Phone', x => esc(x.phone)],
+    ['Website', x => x.site ? `<a href="${esc(x.site)}" target="_blank" rel="noopener">Open ↗</a>` : '—']
+  ], ['Hourly rate', 'Minimum visit length', 'Languages spoken', 'Caregiver screening / training']);
+}
+
+/* ---------- data tab ---------- */
+const PARAMS = [
+  ['Distance from family address (radius)', 'live', 'Calculated from map position'],
+  ['Estimated drive time', 'live', 'Estimate. Phase 2: routing service'],
+  ['Care level (LTC / AL / IL / memory care)', 'live', 'Source spreadsheet'],
+  ['Public wait time', 'live', 'Island Health'],
+  ['Payment: subsidized vs private', 'live', 'Source spreadsheet (some unclear)'],
+  ['Number of beds', 'partial', 'Known for 10 homes. Seniors Advocate directory'],
+  ['Campus of care / multi-level', 'live', 'Source spreadsheet'],
+  ['Veteran priority, cultural, faith, day programs', 'live', 'Source notes'],
+  ['Operator type (health authority / non-profit / for-profit)', 'partial', 'Inferred from operator names. Confirm with Seniors Advocate'],
+  ['Home-care services (nursing, 24-hr, dementia…)', 'live', 'Verification notes, Sep 2026'],
+  ['Listing verification date', 'live', 'Home care only. Add for homes'],
+  ['Monthly rate / resident fees', 'todo', 'Seniors Advocate (subsidized); call (private)'],
+  ['% private rooms', 'todo', 'Seniors Advocate directory'],
+  ['Direct-care hours per resident day', 'todo', 'Seniors Advocate directory'],
+  ['Inspection history & infractions', 'todo', 'Island Health inspection reports'],
+  ['Complaints / licensing data', 'todo', 'Seniors Advocate directory'],
+  ['Quality indicators (falls, antipsychotics, pressure ulcers, restraints)', 'todo', 'Seniors Advocate directory (CIHI data)'],
+  ['ER visits & vaccination rates', 'todo', 'Seniors Advocate directory'],
+  ['Food spending per resident day', 'todo', 'Seniors Advocate directory'],
+  ['Pets, couples, palliative care, languages', 'todo', 'Phone survey of homes'],
+  ['Transit & parking for visitors', 'todo', 'BC Transit open data'],
+  ['Accreditation status', 'todo', 'Accreditation Canada'],
+  ['Home care: hourly rate, minimum hours, languages', 'todo', 'Phone survey of providers']
+];
+function renderData(){
+  const st = {live: '<span class="tag ok">Live</span>', partial: '<span class="tag upd">Partial</span>', todo: '<span class="tag warn">Phase 2</span>'};
+  $('#paramTable tbody').innerHTML = PARAMS.map((p, i) => `<tr><td>${i + 1}</td><td>${p[0]}</td><td>${st[p[1]]}</td><td>${p[2]}</td></tr>`).join('');
+  const dq = [];
+  DATA.facilities.forEach(f => f.flags.filter(x => !/Bed count|Single source/.test(x)).forEach(x => dq.push(`<b>${esc(f.name)}</b>: ${esc(x)}`)));
+  const noBeds = DATA.facilities.filter(f => f.flags.some(x => /Bed count/.test(x))).length;
+  const single = DATA.facilities.filter(f => f.flags.some(x => /Single source/.test(x))).length;
+  dq.push(`<b>${noBeds} homes</b> have no bed count.`);
+  dq.push(`<b>${single} homes</b> come only from the Chamber of Commerce listing (not cross-checked).`);
+  DATA.homecare.filter(h => h.vcls === 'warn' || h.vcls === 'part').forEach(h => dq.push(`<b>${esc(h.name)}</b> (home care): ${esc(h.vstatus)}`));
+  dq.push('Spreadsheet drive times were measured from one fixed address (113 Superior St), and some don\'t match the map. This page calculates distance from each family\'s own address instead.');
+  $('#dqList').innerHTML = dq.map(x => `<li>${x}</li>`).join('');
+  updateGeoStatus();
+}
+function updateGeoStatus(){
+  const all = [...DATA.facilities, ...DATA.homecare], ex = all.filter(x => x.exact).length, none = all.filter(x => x.lat == null).length;
+  const el = $('#geoStatus'); if (el) el.textContent = `${ex} of ${all.length} listings matched to an exact street address. ${all.length - ex - none} use approximate pins. ${none} have no published address.`;
+}
+
+/* ---------- refine pins with BC geocoder ---------- */
+async function refinePins(){
+  const todo = [...DATA.facilities, ...DATA.homecare].filter(x => !x.exact && x.lat != null);
+  let changed = 0;
+  const clean = a => { const m = a.match(/\d[\w-]*\s+[^,;()]+,\s*[^,;()]+,\s*BC/); return m ? m[0] : null; };
+  const worker = async () => {
+    while (todo.length){
+      const x = todo.shift(), q = clean(x.addr); if (!q) continue;
+      try{
+        const r = await fetch('https://geocoder.api.gov.bc.ca/addresses.json?maxResults=1&provinceCode=BC&addressString=' + encodeURIComponent(q));
+        if (!r.ok) continue; const j = await r.json(), f = j.features && j.features[0];
+        if (f && f.properties.score >= 85 && /CIVIC_NUMBER|BLOCK/.test(f.properties.matchPrecision)){
+          const [lng, lat] = f.geometry.coordinates;
+          if (km({lat, lng}, x) < 8){ x.lat = lat; x.lng = lng; x.exact = true; geoCache[x.id] = [lat, lng]; changed++; }
+        }
+      }catch(e){ todo.length = 0; }
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  if (changed){ store.set('cf_geo_v1', geoCache); render(); }
+  updateGeoStatus();
+}
+
+/* ---------- events ---------- */
+$$('nav.tabs button').forEach(b => b.addEventListener('click', () => {
+  state.tab = b.dataset.tab; state.highlight = null;
+  $$('nav.tabs button').forEach(x => x.setAttribute('aria-selected', x === b));
+  $('#listView').hidden = !(state.tab === 'homes' || state.tab === 'incare');
+  $('#filtersHomes').hidden = state.tab !== 'homes'; $('#filtersIncare').hidden = state.tab !== 'incare';
+  $('#compareView').hidden = state.tab !== 'compare'; $('#dataView').hidden = state.tab !== 'data';
+  render(); if (!$('#listView').hidden) setTimeout(() => map.invalidateSize(), 50);
+}));
+document.addEventListener('input', e => { if (e.target.closest('aside.filters')) render(); });
+$('#sortSel').addEventListener('change', e => { state.sort[state.tab] = e.target.value; render(); });
+document.addEventListener('click', e => {
+  const c = e.target.closest('[data-cmp]');
+  if (c){ const [kind, id] = c.dataset.cmp.split(':'), arr = state.compare[kind], i = arr.indexOf(id);
+    if (i >= 0) arr.splice(i, 1); else { if (arr.length >= 4){ alert('You can compare up to 4 at a time. Remove one first.'); return; } arr.push(id); }
+    store.set('cf_compare', state.compare); render(); return; }
+  const l = e.target.closest('[data-locate]');
+  if (l){ const m = markers[l.dataset.locate]; if (m){ state.highlight = l.dataset.locate; map.setView(m.getLatLng(), 15); m.openPopup(); $('#map').scrollIntoView({behavior: 'smooth', block: 'nearest'}); } return; }
+  const r = e.target.closest('[data-reset]');
+  if (r){ const a = r.closest('aside'); a.querySelectorAll('input[type=checkbox]').forEach(i => i.checked = false);
+    a.querySelectorAll('select').forEach(s => s.value = ''); a.querySelectorAll('input[type=search]').forEach(s => s.value = ''); render(); }
+});
+
+render();
+if (state.origin) fitToRadius();
+refinePins();
+</script>
+</body>
+</html>
